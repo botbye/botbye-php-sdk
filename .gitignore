@@ -1,0 +1,8 @@
+/vendor/
+/composer.lock
+/.phpunit.cache/
+/.idea/
+.DS_Store
+*.log
+STRUCTURE.md
+CHECKLIST.md
