@@ -6,11 +6,11 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final readonly class BotbyeAtoResponse implements JsonSerializable
+final class BotbyeAtoResponse implements JsonSerializable
 {
     public function __construct(
-        public ?BotbyeAtoResult $result = null,
-        public ?BotbyeError $error = null,
+        public readonly ?BotbyeAtoResult $result = null,
+        public readonly ?BotbyeError $error = null,
     ) {
     }
 

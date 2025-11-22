@@ -8,19 +8,19 @@ use DateTimeImmutable;
 use DateTimeInterface;
 use JsonSerializable;
 
-final readonly class BotbyeAtoContext implements JsonSerializable
+final class BotbyeAtoContext implements JsonSerializable
 {
     /**
      * @param array<string, string>|null $customFields
      */
     public function __construct(
-        public BotbyeUserInfo $userInfo,
-        public string $remoteAddr,
-        public Headers $headers,
-        public EventType $eventType,
-        public EventStatus $eventStatus,
-        public DateTimeImmutable $createdAt,
-        public ?array $customFields = null,
+        public readonly BotbyeUserInfo $userInfo,
+        public readonly string $remoteAddr,
+        public readonly Headers $headers,
+        public readonly EventType $eventType,
+        public readonly EventStatus $eventStatus,
+        public readonly DateTimeImmutable $createdAt,
+        public readonly ?array $customFields = null,
     ) {
     }
 

@@ -6,13 +6,13 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final readonly class BotbyeUserInfo implements JsonSerializable
+final class BotbyeUserInfo implements JsonSerializable
 {
     public function __construct(
-        public string $accountId,
-        public ?string $username = null,
-        public ?string $email = null,
-        public ?string $phone = null,
+        public readonly string $accountId,
+        public readonly ?string $username = null,
+        public readonly ?string $email = null,
+        public readonly ?string $phone = null,
     ) {
     }
 

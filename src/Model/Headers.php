@@ -6,13 +6,13 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final readonly class Headers implements JsonSerializable
+final class Headers implements JsonSerializable
 {
     /**
      * @param array<string, list<string>> $headers
      */
     public function __construct(
-        public array $headers,
+        public readonly array $headers,
     ) {
     }
 

@@ -6,21 +6,21 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final readonly class BotbyeExtraData implements JsonSerializable
+final class BotbyeExtraData implements JsonSerializable
 {
     public function __construct(
-        public ?string $ip = null,
-        public ?string $asn = null,
-        public ?string $country = null,
-        public ?string $browser = null,
-        public ?string $browserVersion = null,
-        public ?string $deviceName = null,
-        public ?string $deviceType = null,
-        public ?string $deviceCodeName = null,
-        public ?string $platform = null,
-        public ?string $platformVersion = null,
-        public ?string $realIp = null,
-        public ?string $realCountry = null,
+        public readonly ?string $ip = null,
+        public readonly ?string $asn = null,
+        public readonly ?string $country = null,
+        public readonly ?string $browser = null,
+        public readonly ?string $browserVersion = null,
+        public readonly ?string $deviceName = null,
+        public readonly ?string $deviceType = null,
+        public readonly ?string $deviceCodeName = null,
+        public readonly ?string $platform = null,
+        public readonly ?string $platformVersion = null,
+        public readonly ?string $realIp = null,
+        public readonly ?string $realCountry = null,
     ) {
     }
 
