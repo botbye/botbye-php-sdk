@@ -17,6 +17,7 @@ final class BotbyeConfig
         public readonly string $contentType = 'application/json',
         public readonly float $timeout = 1.0,        // connection and read timeout
         public readonly float $max_duration = 2.0,   // maximum request duration
+        public ?string $initGuardFlagFile = null,
     ) {
         if (empty($this->serverKey)) {
             throw new InvalidArgumentException('[BotBye] server key is not specified');

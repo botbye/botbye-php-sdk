@@ -26,6 +26,8 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 final class BotbyeClient
 {
+    private static bool $inited = false;
+
     private HttpClientInterface $httpClient;
     private LoggerInterface $logger;
 
@@ -36,6 +38,7 @@ final class BotbyeClient
     ) {
         $this->httpClient = $httpClient ?? $this->createDefaultHttpClient();
         $this->logger = $logger ?? new NullLogger();
+        $this->ensureInited();
     }
 
     /**
@@ -104,6 +107,66 @@ final class BotbyeClient
     {
         $this->config = $config;
         $this->httpClient = $this->createDefaultHttpClient();
+        $this->ensureInited();
+    }
+
+    private function ensureInited(): void
+    {
+        if (self::$inited) {
+            return;
+        }
+
+        $flagFile = $this->getInitGuardFlagFilePath();
+        $lockFile = $flagFile . '.lock';
+
+        $lockHandle = @fopen($lockFile, 'c+');
+        if ($lockHandle === false) {
+            self::$inited = true;
+            $this->initRequest();
+            return;
+        }
+
+        try {
+            if (!@flock($lockHandle, LOCK_EX)) {
+                self::$inited = true;
+                $this->initRequest();
+                return;
+            }
+
+            clearstatcache(true, $flagFile);
+
+            $needsInit = true;
+            $processStartTime = (int) (@filemtime('/proc/self/stat') ?: 0);
+
+            if (is_file($flagFile)) {
+                $flagTime = (int) @file_get_contents($flagFile);
+
+                if ($flagTime >= $processStartTime && $processStartTime > 0) {
+                    $needsInit = false;
+                }
+            }
+
+            self::$inited = true;
+
+            if ($needsInit) {
+                $this->initRequest();
+                @file_put_contents($flagFile, (string) time());
+            }
+        } finally {
+            @flock($lockHandle, LOCK_UN);
+            @fclose($lockHandle);
+        }
+    }
+
+    private function getInitGuardFlagFilePath(): string
+    {
+        if ($this->config->initGuardFlagFile !== null && $this->config->initGuardFlagFile !== '') {
+            return $this->config->initGuardFlagFile;
+        }
+
+        $key = hash('sha256', rtrim($this->config->botbyeEndpoint, '/') . '|' . $this->config->serverKey);
+        $dir = rtrim((string) sys_get_temp_dir(), DIRECTORY_SEPARATOR);
+        return $dir . DIRECTORY_SEPARATOR . 'botbye-php-sdk-init-' . $key . '.flag';
     }
 
     /**
@@ -155,6 +218,45 @@ final class BotbyeClient
             'Module-Version' => BotbyeConfig::MODULE_VERSION,
             'X-Botbye-Server-Key' => $this->config->serverKey,
         ];
+    }
+
+    private function initRequest(): void
+    {
+        try {
+            $url = rtrim($this->config->botbyeEndpoint, '/') . '/init-request/v1';
+            error_log('[BotBye] init-request: url = ' . $url);
+
+            $headers = $this->buildHeaders();
+            error_log('[BotBye] init-request: headers = ' . json_encode($headers));
+
+            $body = ['serverKey' => $this->config->serverKey];
+            error_log('[BotBye] init-request: body = ' . json_encode($body));
+
+            $response = $this->httpClient->request('POST', $url, [
+                'headers' => $headers,
+                'json' => $body,
+                'timeout' => $this->config->timeout,
+            ]);
+
+            $statusCode = $response->getStatusCode();
+            error_log('[BotBye] init-request: HTTP status = ' . $statusCode);
+
+            $content = $response->getContent(false);
+            error_log('[BotBye] init-request: raw response = ' . $content);
+
+            $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
+            error_log('[BotBye] init-request: decoded response = ' . json_encode($decoded));
+
+            if (($decoded['error'] ?? null) !== null || ($decoded['status'] ?? null) !== 'ok') {
+                error_log('[BotBye] init-request error = ' . ($decoded['error'] ?? 'null')
+                    . '; status = ' . ($decoded['status'] ?? 'null'));
+            } else {
+                error_log('[BotBye] init-request: success, status = ' . ($decoded['status'] ?? 'null'));
+            }
+        } catch (Exception $e) {
+            error_log('[BotBye] init-request exception: ' . $e->getMessage());
+            error_log('[BotBye] init-request exception trace: ' . $e->getTraceAsString());
+        }
     }
 
     private function createDefaultHttpClient(): HttpClientInterface
