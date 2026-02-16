@@ -6,10 +6,10 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final readonly class BotbyeError implements JsonSerializable
+final class BotbyeError implements JsonSerializable
 {
     public function __construct(
-        public string $message,
+        public readonly string $message,
     ) {
     }
 

@@ -6,16 +6,16 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final readonly class BotbyeRequest implements JsonSerializable
+final class BotbyeRequest implements JsonSerializable
 {
     /**
      * @param array<string, string> $customFields
      */
     public function __construct(
-        public string $serverKey,
-        public Headers $headers,
-        public ConnectionDetails $requestInfo,
-        public array $customFields = [],
+        public readonly string $serverKey,
+        public readonly Headers $headers,
+        public readonly ConnectionDetails $requestInfo,
+        public readonly array $customFields = [],
     ) {
     }
 

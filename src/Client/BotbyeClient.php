@@ -140,7 +140,7 @@ final class BotbyeClient
 
             if (is_file($flagFile)) {
                 $flagTime = (int) @file_get_contents($flagFile);
-                // Flag считаем валидным, если он создан после старта текущего процесса
+
                 if ($flagTime >= $processStartTime && $processStartTime > 0) {
                     $needsInit = false;
                 }

@@ -6,11 +6,11 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final readonly class BotbyeAtoResult implements JsonSerializable
+final class BotbyeAtoResult implements JsonSerializable
 {
     public function __construct(
-        public Decision $decision = Decision::ALLOW,
-        public ?string $reason = null,
+        public readonly Decision $decision = Decision::ALLOW,
+        public readonly ?string $reason = null,
     ) {
     }
 

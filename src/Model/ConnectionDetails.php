@@ -6,12 +6,12 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final readonly class ConnectionDetails implements JsonSerializable
+final class ConnectionDetails implements JsonSerializable
 {
     public function __construct(
-        public string $remoteAddr,
-        public string $requestMethod,
-        public string $requestUri,
+        public readonly string $remoteAddr,
+        public readonly string $requestMethod,
+        public readonly string $requestUri,
     ) {
     }
 

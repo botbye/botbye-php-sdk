@@ -4,7 +4,7 @@ Validate incoming requests for bot activity with PHP SDK for [Botbye](https://bo
 
 ## Requirements
 
-- PHP 8.2 or higher
+- PHP 8.1 or higher
 - Composer
 
 ## Installation
