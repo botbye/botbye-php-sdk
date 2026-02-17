@@ -119,7 +119,7 @@ final class BotbyeClient
         $flagFile = $this->getInitGuardFlagFilePath();
         $lockFile = $flagFile . '.lock';
 
-        $lockHandle = @fopen($lockFile, 'c+');
+        $lockHandle = @fopen($lockFile, 'c');
         if ($lockHandle === false) {
             self::$inited = true;
             $this->initRequest();
@@ -135,14 +135,15 @@ final class BotbyeClient
 
             clearstatcache(true, $flagFile);
 
+            $pid = (string) getmypid();
             $needsInit = true;
-            $processStartTime = (int) (@filemtime('/proc/self/stat') ?: 0);
 
             if (is_file($flagFile)) {
-                $flagTime = (int) @file_get_contents($flagFile);
-
-                if ($flagTime >= $processStartTime && $processStartTime > 0) {
-                    $needsInit = false;
+                $content = (string) @file_get_contents($flagFile);
+                if (preg_match('/^pid:(\d+)/', $content, $m)) {
+                    if ($m[1] === $pid) {
+                        $needsInit = false;
+                    }
                 }
             }
 
@@ -150,7 +151,7 @@ final class BotbyeClient
 
             if ($needsInit) {
                 $this->initRequest();
-                @file_put_contents($flagFile, (string) time());
+                @file_put_contents($flagFile, "pid:$pid\nat:" . time() . "\n", LOCK_EX);
             }
         } finally {
             @flock($lockHandle, LOCK_UN);
