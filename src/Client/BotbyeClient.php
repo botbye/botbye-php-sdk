@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Botbye\Client;
 
 use Botbye\Exception\BotbyeException;
+use Botbye\Model\BotbyePhishingResponse;
 use Botbye\Model\BotbyeAtoContext;
 use Botbye\Model\BotbyeAtoResponse;
 use Botbye\Model\BotbyeError;
@@ -30,6 +31,7 @@ final class BotbyeClient
 
     private HttpClientInterface $httpClient;
     private LoggerInterface $logger;
+    private ?BotbyePhishingConfig $phishingConfig = null;
 
     public function __construct(
         private BotbyeConfig $config,
@@ -108,6 +110,67 @@ final class BotbyeClient
         $this->config = $config;
         $this->httpClient = $this->createDefaultHttpClient();
         $this->ensureInited();
+    }
+
+    public function setPhishingConfig(BotbyePhishingConfig $config): void
+    {
+        $this->phishingConfig = $config;
+    }
+
+    public function setPhishingConf(BotbyePhishingConfig $config): void
+    {
+        $this->setPhishingConfig($config);
+    }
+
+    public function fetchImage(?string $origin, ?string $imageId = null): BotbyePhishingResponse
+    {
+        $conf = $this->phishingConfig;
+        if ($conf === null) {
+            return new BotbyePhishingResponse(error: new BotbyeError('[BotBye] phishing config is not specified'));
+        }
+
+        $url = $conf->endpoint
+            . '/api/v1/phishing/' . rawurlencode($conf->accountId)
+            . '/projects/' . rawurlencode($conf->projectId)
+            . '/image';
+
+        if ($imageId === null || $imageId === '') {
+            $url .= '?format=png';
+            return $this->fetchPhishingAsset($conf, $url, $origin, 'png');
+        }
+
+        $url .= '?image_id=' . rawurlencode($imageId) . '&format=svg';
+        return $this->fetchPhishingAsset($conf, $url, $origin, 'svg');
+    }
+
+    private function fetchPhishingAsset(
+        BotbyePhishingConfig $conf,
+        string $url,
+        ?string $origin,
+        string $assetType,
+    ): BotbyePhishingResponse {
+        try {
+            $response = $this->httpClient->request('GET', $url, [
+                'headers' => [
+                    'X-Api-Key' => $conf->apiKey,
+                    'Origin' => $origin ?? 'origin is missing',
+                ],
+                'timeout' => $conf->timeout,
+                'max_duration' => $conf->max_duration,
+            ]);
+
+            $statusCode = $response->getStatusCode();
+            $content = $response->getContent(false);
+
+            $headers = array_map(function ($values) {
+                return implode(', ', $values);
+            }, $response->getHeaders(false));
+
+            return new BotbyePhishingResponse(status: $statusCode, headers: $headers, body: $content);
+        } catch (Exception $e) {
+            $this->logger->warning('[BotBye] phishing ' . $assetType . ' exception occurred: ' . $e->getMessage());
+            return new BotbyePhishingResponse(error: new BotbyeError($e->getMessage()));
+        }
     }
 
     private function ensureInited(): void
