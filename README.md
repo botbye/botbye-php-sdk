@@ -1,6 +1,8 @@
-# Botbye PHP SDK
+# BotBye PHP SDK
 
-Validate incoming requests for bot activity with PHP SDK for [Botbye](https://botbye.com).
+PHP SDK for the [BotBye](https://botbye.com) Unified Protection Platform — unifying fraud prevention and real-time event monitoring in one platform.
+
+BotBye goes beyond fixed bot/ATO checks. Risk dimensions and metrics are fully dynamic — you define what to measure and what rules to apply per project. This means the same platform covers bot detection, account takeover, multi-accounting, payment fraud, promotion abuse, or any custom fraud scenario specific to your business.
 
 ## Requirements
 
@@ -13,93 +15,209 @@ Validate incoming requests for bot activity with PHP SDK for [Botbye](https://bo
 composer require botbye/botbye-php-sdk
 ```
 
+## Overview
+
+The SDK provides three request types for different integration levels:
+
+| Request Type | Use Case | Where It Runs |
+|---|---|---|
+| `BotbyeValidationEvent` | **Level 1** — Bot filtering | Proxy or middleware, before user identity is known |
+| `BotbyeRiskScoringEvent` | **Level 2** — Risk scoring & event logging | Application layer, when user identity is known |
+| `BotbyeFullEvent` | **Level 1+2 combined** | Application layer when no separate proxy exists |
+
+All requests go to a single endpoint (`POST /api/v1/protect/evaluate`) and return a unified response with a decision (`ALLOW`, `CHALLENGE`, `BLOCK`), risk scores per dimension, and triggered signals. Dimensions are dynamic — the platform ships with built-in ones (`bot`, `ato`, `abuse`) but you can define custom dimensions (e.g., `payment_fraud`, `promotion_abuse`) per project without code changes.
+
+Every evaluation call is also recorded as a **protection event** — logged to the analytics pipeline and used to compute real-time metrics that feed the rules engine. Metrics are fully configurable per project: the platform ships with built-in ones (failed logins, distinct IPs per account, device reuse, etc.) and you can define custom metrics for your specific use case (e.g., "failed transactions over $1000 per account in 1 hour"). This means `BotbyeRiskScoringEvent` serves a dual purpose: it both evaluates risk **and** logs the event for future analysis and metric aggregation.
+
 ## Quick Start
 
 ### 1. Initialize the Client
 
-Make sure to replace `your-server-key` (available inside your [Projects](https://botbye.com/docs/dashboard/project)):
-
 ```php
-<?php
-
 use Botbye\Client\BotbyeClient;
 use Botbye\Client\BotbyeConfig;
 
 $config = new BotbyeConfig(
-    serverKey: 'your-server-key'
+    serverKey: 'your-server-key' // from https://botbye.com/docs/dashboard/project
 );
 
 $client = new BotbyeClient($config);
 ```
 
-### 2. Validate Request (Bot Detection)
+### 2. Bot Validation (Level 1)
+
+Validate device tokens where user identity is not yet available — at the proxy layer or in a middleware before authentication.
 
 ```php
-<?php
-
-use Botbye\Model\ConnectionDetails;
+use Botbye\Model\BotbyeValidationEvent;
 use Botbye\Model\Headers;
-
-// Prepare request data
-$connectionDetails = new ConnectionDetails(
-    remoteAddr: $_SERVER['REMOTE_ADDR'],
-    requestMethod: $_SERVER['REQUEST_METHOD'],
-    requestUri: $_SERVER['REQUEST_URI']
-);
 
 $headers = Headers::fromArray(getallheaders());
 
-/**
- * Validate the request
- * 
- * Make sure to replace the `botbye_token` with the one received from a botbye client
- */
-$response = $client->validateRequest(
-    token: $_GET['botbye_token'] ?? null,   // for example, the client attaches the botbye_token as a query param
-    connectionDetails: $connectionDetails,
-    headers: $headers,
-    customFields: [                         // Optional custom fields for linking the request
-        'user_id' => '12345',
-        'session_id' => session_id(),
-    ]
-);
+$response = $client->evaluate(new BotbyeValidationEvent(
+    ip: $_SERVER['REMOTE_ADDR'],
+    token: $_GET['botbye_token'] ?? '',
+    headers: $headers->jsonSerialize(),
+    requestMethod: $_SERVER['REQUEST_METHOD'],
+    requestUri: $_SERVER['REQUEST_URI'],
+));
 
-if ($response->result !== null && !$response->result->isAllowed) {
+if ($response->isBlocked()) {
     http_response_code(403);
-    echo 'Access denied';
-    exit;
+    exit('Access denied');
 }
 
-// Request is allowed, continue processing
-echo 'Welcome!';
+// Propagate bot score to Level 2 via header
+header(BotbyeClient::RESULT_HEADER . ': ' . $client->encodeResult($response));
+```
+
+### 3. Risk Scoring & Event Logging (Level 2)
+
+Evaluate risk and log events when user identity is known. Each call both scores the request **and** feeds the real-time metrics engine, so you should call `evaluate()` for every significant user action — not just when you need a decision.
+
+```php
+use Botbye\Model\BotbyeRiskScoringEvent;
+use Botbye\Model\BotbyeUserInfo;
+use Botbye\Model\EventStatus;
+use Botbye\Model\Decision;
+
+$response = $client->evaluate(new BotbyeRiskScoringEvent(
+    ip: $_SERVER['REMOTE_ADDR'],
+    headers: $headers->jsonSerialize(),
+    user: new BotbyeUserInfo(
+        accountId: $userId,
+        email: $userEmail,       // optional
+        phone: $userPhone,       // optional
+    ),
+    eventType: 'LOGIN',
+    eventStatus: EventStatus::SUCCESSFUL,
+    botbyeResult: $_SERVER['HTTP_X_BOTBYE_RESULT'] ?? null, // from Level 1
+));
+
+match ($response->decision) {
+    Decision::BLOCK     => abort(403),
+    Decision::CHALLENGE => showChallenge($response->challenge),
+    Decision::ALLOW     => continueRequest(),
+};
+```
+
+When `botbyeResult` is `null` (no Level 1 upstream), bot validation is automatically bypassed.
+
+#### Event Types
+
+`eventType` is an arbitrary string — the server accepts any value. Pass any string that matches your business domain:
+
+```php
+'LOGIN'
+'REGISTRATION'
+'TRANSACTION'
+'BONUS_CLAIM'
+'PASSWORD_RESET'
+'WITHDRAWAL'
+```
+
+#### Using Level 2 for Event Logging
+
+Even when you don't need to act on the decision, sending events builds the metrics profile for the account. This enables rules like "more than 5 failed logins in 10 minutes" or "distinct devices per account in 1 hour":
+
+```php
+// Log a failed login attempt — feeds metrics even if you don't act on the decision
+$client->evaluate(new BotbyeRiskScoringEvent(
+    ip: $_SERVER['REMOTE_ADDR'],
+    headers: $headers->jsonSerialize(),
+    user: new BotbyeUserInfo(accountId: $userId),
+    eventType: 'LOGIN',
+    eventStatus: EventStatus::FAILED,
+));
+
+// Log a custom business event
+$client->evaluate(new BotbyeRiskScoringEvent(
+    ip: $_SERVER['REMOTE_ADDR'],
+    headers: $headers->jsonSerialize(),
+    user: new BotbyeUserInfo(accountId: $userId),
+    eventType: 'BONUS_CLAIM',
+    eventStatus: EventStatus::SUCCESSFUL,
+    customFields: ['bonus_id' => 'welcome_100'],
+));
+```
+
+### 4. Full Evaluation (Level 1+2 Combined)
+
+Use when there is no separate proxy layer — validates the device token and evaluates risk in a single call.
+
+```php
+use Botbye\Model\BotbyeFullEvent;
+
+$response = $client->evaluate(new BotbyeFullEvent(
+    ip: $_SERVER['REMOTE_ADDR'],
+    token: $_GET['botbye_token'] ?? '',
+    headers: $headers->jsonSerialize(),
+    user: new BotbyeUserInfo(accountId: $userId),
+    eventType: 'LOGIN',
+    eventStatus: EventStatus::FAILED,
+));
+```
+
+## Response
+
+`BotbyeEvaluateResponse` contains:
+
+| Field | Type | Description |
+|---|---|---|
+| `requestId` | `?string` | Request UUID |
+| `decision` | `Decision` | `ALLOW`, `CHALLENGE`, or `BLOCK` |
+| `riskScore` | `?float` | Overall risk score (0–1) |
+| `scores` | `?array` | Per-dimension scores (`bot`, `ato`, `abuse`, ...) |
+| `signals` | `?array` | Triggered signal names (e.g., `BruteForce`, `ImpossibleTravel`) |
+| `challenge` | `?BotbyeChallenge` | Challenge type and token (when decision is `CHALLENGE`) |
+| `extraData` | `?BotbyeExtraData` | Enriched device data (IP, country, browser, device, etc.) |
+| `config` | `BotbyeEvaluateConfig` | Config flags (`bypassBotValidation`) |
+| `error` | `?BotbyeError` | Error details (on fallback) |
+
+```php
+$response->decision;              // Decision::ALLOW
+$response->isBlocked();           // false
+$response->riskScore;             // 0.72
+$response->scores;                // ['bot' => 0.15, 'ato' => 0.72, 'abuse' => 0.05]
+$response->signals;               // ['BruteForce', 'ImpossibleTravel']
+$response->challenge?->type;      // 'captcha'
+$response->extraData?->country;   // 'US'
+```
+
+## Level 1 to Level 2 Propagation
+
+When using both levels, propagate the Level 1 result to Level 2 via the `X-Botbye-Result` header. This allows the platform to link both evaluations by `requestId` and combine bot score from Level 1 with risk scores from Level 2 into a single unified result:
+
+```php
+// Level 1 (proxy) — validate and forward result
+$response = $client->evaluate(new BotbyeValidationEvent(...));
+header(BotbyeClient::RESULT_HEADER . ': ' . $client->encodeResult($response));
+
+// Or bypass validation entirely
+header(BotbyeClient::RESULT_HEADER . ': ' . $client->bypassResult());
+
+// Level 2 (middleware) — pass the header value as botbyeResult
+$response = $client->evaluate(new BotbyeRiskScoringEvent(
+    // ...
+    botbyeResult: $_SERVER['HTTP_X_BOTBYE_RESULT'] ?? null,
+));
 ```
 
 ## Configuration
 
-### Advanced Configuration
-
 ```php
-<?php
-
-use Botbye\Client\BotbyeConfig;
-
 $config = new BotbyeConfig(
-    serverKey: 'your-server-key',
-    timeout: 1.0,       // the idle timeout (in seconds)
-    max_duration: 2.0,  // the maximum execution time (in seconds) for the request+response as a whole
+    serverKey: 'your-server-key', // from https://app.botbye.com
+    botbyeEndpoint: 'https://verify.botbye.com', // default
+    timeout: 1.0,       // connection + read timeout in seconds
+    max_duration: 2.0,  // max total request duration in seconds
 );
 ```
 
 ### Custom HTTP Client
 
 ```php
-<?php
-
-use Botbye\Client\BotbyeClient;
-use Botbye\Client\BotbyeConfig;
 use Symfony\Component\HttpClient\HttpClient;
-
-$config = new BotbyeConfig(serverKey: 'your-server-key');
 
 $httpClient = HttpClient::create([
     'timeout' => 2,
@@ -109,72 +227,63 @@ $httpClient = HttpClient::create([
 $client = new BotbyeClient($config, $httpClient);
 ```
 
-### PSR-3 Logger Integration
+### PSR-3 Logger
 
 ```php
-<?php
-
-use Botbye\Client\BotbyeClient;
-use Botbye\Client\BotbyeConfig;
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
-
-$config = new BotbyeConfig(serverKey: 'your-server-key');
 
 $logger = new Logger('botbye');
 $logger->pushHandler(new StreamHandler('/var/log/botbye.log', Logger::WARNING));
 
-$client = new BotbyeClient($config, null, $logger);
+$client = new BotbyeClient($config, logger: $logger);
 ```
 
-## Testing
+## Error Handling
 
-Run the test suite:
-
-```bash
-composer install
-vendor/bin/phpunit
-```
-
-## Framework Integration Examples
-
-### Laravel
+The SDK follows a **fail-open** strategy. On network or server errors, `evaluate()` returns a bypass response (`Decision::ALLOW` with `bypassBotValidation: true`) instead of throwing:
 
 ```php
-<?php
+$response = $client->evaluate($event);
 
+if ($response->error !== null) {
+    // Evaluation failed, request was allowed by default
+    log($response->error->message);
+}
+```
+
+`BotbyeException` is only thrown for unrecoverable errors during `sendPayload()` — the client catches these internally and returns the bypass response.
+
+## Framework Integration
+
+### Laravel Middleware
+
+```php
 namespace App\Http\Middleware;
 
 use Botbye\Client\BotbyeClient;
-use Botbye\Model\ConnectionDetails;
+use Botbye\Model\BotbyeValidationEvent;
 use Botbye\Model\Headers;
 use Closure;
 use Illuminate\Http\Request;
 
 class BotbyeMiddleware
 {
-    public function __construct(
-        private BotbyeClient $botbye
-    ) {
-    }
+    public function __construct(private BotbyeClient $botbye) {}
 
     public function handle(Request $request, Closure $next)
     {
-        $connectionDetails = new ConnectionDetails(
-            remoteAddr: $request->ip(),
-            requestMethod: $request->method(),
-            requestUri: $request->getRequestUri()
-        );
-
         $headers = Headers::fromArray($request->headers->all());
 
-        $response = $this->botbye->validateRequest(
-            token: $request->query('botbye_token'),
-            connectionDetails: $connectionDetails,
-            headers: $headers
-        );
+        $response = $this->botbye->evaluate(new BotbyeValidationEvent(
+            ip: $request->ip(),
+            token: $request->query('botbye_token', ''),
+            headers: $headers->jsonSerialize(),
+            requestMethod: $request->method(),
+            requestUri: $request->getRequestUri(),
+        ));
 
-        if ($response->result !== null && !$response->result->isAllowed) {
+        if ($response->isBlocked()) {
             abort(403, 'Access denied');
         }
 
@@ -183,15 +292,13 @@ class BotbyeMiddleware
 }
 ```
 
-### Symfony
+### Symfony Event Subscriber
 
 ```php
-<?php
-
 namespace App\EventSubscriber;
 
 use Botbye\Client\BotbyeClient;
-use Botbye\Model\ConnectionDetails;
+use Botbye\Model\BotbyeValidationEvent;
 use Botbye\Model\Headers;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
@@ -200,41 +307,38 @@ use Symfony\Component\HttpKernel\KernelEvents;
 
 class BotbyeSubscriber implements EventSubscriberInterface
 {
-    public function __construct(
-        private BotbyeClient $botbye
-    ) {
-    }
+    public function __construct(private BotbyeClient $botbye) {}
 
     public static function getSubscribedEvents(): array
     {
-        return [
-            KernelEvents::REQUEST => 'onKernelRequest',
-        ];
+        return [KernelEvents::REQUEST => 'onKernelRequest'];
     }
 
     public function onKernelRequest(RequestEvent $event): void
     {
         $request = $event->getRequest();
-
-        $connectionDetails = new ConnectionDetails(
-            remoteAddr: $request->getClientIp(),
-            requestMethod: $request->getMethod(),
-            requestUri: $request->getRequestUri()
-        );
-
         $headers = Headers::fromArray($request->headers->all());
 
-        $response = $this->botbye->validateRequest(
-            token: $request->query->get('botbye_token'),
-            connectionDetails: $connectionDetails,
-            headers: $headers
-        );
+        $response = $this->botbye->evaluate(new BotbyeValidationEvent(
+            ip: $request->getClientIp(),
+            token: $request->query->get('botbye_token', ''),
+            headers: $headers->jsonSerialize(),
+            requestMethod: $request->getMethod(),
+            requestUri: $request->getRequestUri(),
+        ));
 
-        if ($response->result !== null && !$response->result->isAllowed) {
-            throw new AccessDeniedHttpException('Access denied by Botbye');
+        if ($response->isBlocked()) {
+            throw new AccessDeniedHttpException('Access denied');
         }
     }
 }
+```
+
+## Testing
+
+```bash
+composer install
+vendor/bin/phpunit
 ```
 
 ## License
@@ -243,4 +347,4 @@ MIT
 
 ## Support
 
-For support, please visit [https://botbye.com](https://botbye.com) or contact [accounts@botbye.com](mailto:accounts@botbye.com)
+For support, visit [botbye.com](https://botbye.com) or contact [accounts@botbye.com](mailto:accounts@botbye.com).

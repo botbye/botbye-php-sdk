@@ -9,7 +9,7 @@ use InvalidArgumentException;
 final class BotbyeConfig
 {
     public const MODULE_NAME = 'PHP';
-    public const MODULE_VERSION = '1.0.0';
+    public const MODULE_VERSION = '2.0.0';
 
     public function __construct(
         public readonly string $serverKey,

@@ -8,5 +8,5 @@ enum EventStatus: string
 {
     case SUCCESSFUL = 'SUCCESSFUL';
     case FAILED = 'FAILED';
-    case PENDING = 'PENDING';
+    case ATTEMPTED = 'ATTEMPTED';
 }

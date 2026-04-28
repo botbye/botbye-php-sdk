@@ -6,24 +6,22 @@ namespace Botbye\Model;
 
 use JsonSerializable;
 
-final class BotbyeChallengeResult implements JsonSerializable
+final class BotbyeEvaluateConfig implements JsonSerializable
 {
     public function __construct(
-        public readonly bool $isAllowed = true,
+        public readonly bool $bypassBotValidation = false,
     ) {
     }
 
     public function jsonSerialize(): array
     {
-        return [
-            'isAllowed' => $this->isAllowed,
-        ];
+        return ['bypass_bot_validation' => $this->bypassBotValidation];
     }
 
     public static function fromArray(array $data): self
     {
         return new self(
-            isAllowed: $data['isAllowed'] ?? true,
+            bypassBotValidation: $data['bypass_bot_validation'] ?? false,
         );
     }
 }

@@ -5,17 +5,12 @@ declare(strict_types=1);
 namespace Botbye\Client;
 
 use Botbye\Exception\BotbyeException;
-use Botbye\Model\BotbyePhishingResponse;
-use Botbye\Model\BotbyeAtoContext;
-use Botbye\Model\BotbyeAtoResponse;
 use Botbye\Model\BotbyeError;
-use Botbye\Model\BotbyeRequest;
-use Botbye\Model\BotbyeValidatorResponse;
-use Botbye\Model\ConnectionDetails;
-use Botbye\Model\Headers;
+use Botbye\Model\BotbyeEvaluateResponse;
+use Botbye\Model\BotbyePhishingResponse;
+use Botbye\Model\BotbyeEvent;
 use Exception;
 use JsonException;
-use JsonSerializable;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Symfony\Component\HttpClient\HttpClient;
@@ -27,11 +22,15 @@ use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 final class BotbyeClient
 {
+    public const RESULT_HEADER = 'X-Botbye-Result';
+
     private static bool $inited = false;
 
     private HttpClientInterface $httpClient;
     private LoggerInterface $logger;
     private ?BotbyePhishingConfig $phishingConfig = null;
+
+    private readonly string $bypassResultBase64;
 
     public function __construct(
         private BotbyeConfig $config,
@@ -40,71 +39,76 @@ final class BotbyeClient
     ) {
         $this->httpClient = $httpClient ?? $this->createDefaultHttpClient();
         $this->logger = $logger ?? new NullLogger();
+        $this->bypassResultBase64 = base64_encode(
+            (string)json_encode(['config' => ['bypass_bot_validation' => true]])
+        );
         $this->ensureInited();
     }
 
     /**
-     * Validate incoming request for bot detection
+     * Send device/event data for risk evaluation.
+     * Accepts ValidateEventRequest, RiskScoringRequest, or FullEventRequest.
      *
-     * @param array<string, string> $customFields
+     * On network or server error, returns a bypass response (fail open) with error set.
      */
-    public function validateRequest(
-        ?string $token,
-        ConnectionDetails $connectionDetails,
-        Headers $headers,
-        array $customFields = [],
-    ): BotbyeValidatorResponse {
+    public function evaluate(BotbyeEvent $request): BotbyeEvaluateResponse
+    {
+        $token = $request->getUrlToken();
         $url = sprintf(
-            '%s/validate-request/v2?%s',
+            '%s/api/v1/protect/evaluate%s',
             $this->config->botbyeEndpoint,
-            $token ?? ''
-        );
-
-        $request = new BotbyeRequest(
-            serverKey: $this->config->serverKey,
-            headers: $headers,
-            requestInfo: $connectionDetails,
-            customFields: $customFields,
+            $token !== null ? '?' . $token : ''
         );
 
         try {
-            $response = $this->sendRequest($url, $request);
-            return BotbyeValidatorResponse::fromArray($response);
+            $payload = array_merge(
+                $request->jsonSerialize(),
+                [
+                    'server_key' => $this->config->serverKey,
+                    'integration' => [
+                        'module_name' => BotbyeConfig::MODULE_NAME,
+                        'module_version' => BotbyeConfig::MODULE_VERSION,
+                    ],
+                ]
+            );
+
+            $response = $this->sendPayload($url, $payload);
+
+            return BotbyeEvaluateResponse::fromArray($response);
         } catch (Exception $e) {
             $this->logger->warning('[BotBye] exception occurred: ' . $e->getMessage());
-            return new BotbyeValidatorResponse(
-                error: new BotbyeError('[BotBye] failed to sendRequest: ' . $e->getMessage())
-            );
+
+            return BotbyeEvaluateResponse::bypass($this->classifyError($e->getMessage()));
         }
     }
 
     /**
-     * Analyze context for account takeover protection
+     * Encodes evaluate response as base64 JSON for propagation to Level 2
+     * via the X-Botbye-Result (RESULT_HEADER) header.
+     * Mirrors Kotlin Botbye.encodeResult() and OpenResty M.encodeResult().
      */
-    public function analyze(
-        ?string $token,
-        BotbyeAtoContext $atoContext,
-    ): BotbyeAtoResponse {
-        $url = sprintf(
-            '%s/analyze-context/v1?%s',
-            $this->config->botbyeEndpoint,
-            $token ?? ''
-        );
-
-        try {
-            $response = $this->sendRequest($url, $atoContext);
-            return BotbyeAtoResponse::fromArray($response);
-        } catch (Exception $e) {
-            $this->logger->warning('[BotBye] exception occurred: ' . $e->getMessage());
-            return new BotbyeAtoResponse(
-                error: new BotbyeError('[BotBye] failed to sendRequest: ' . $e->getMessage())
-            );
-        }
+    public function encodeResult(BotbyeEvaluateResponse $response): string
+    {
+        return base64_encode((string)json_encode([
+            'request_id' => $response->requestId,
+            'decision' => $response->decision->value,
+            'risk_score' => $response->riskScore,
+            'signals' => $response->signals,
+            'scores' => $response->scores,
+            'config' => $response->config,
+        ]));
     }
 
     /**
-     * Update configuration
+     * Returns a pre-computed bypass result (base64 JSON with bypass_bot_validation=true).
+     * Use when request should not be validated (excluded URI, service token, etc).
+     * Mirrors Kotlin Botbye.bypassResult() and OpenResty M.propagateBypass().
      */
+    public function bypassResult(): string
+    {
+        return $this->bypassResultBase64;
+    }
+
     public function setConfig(BotbyeConfig $config): void
     {
         $this->config = $config;
@@ -115,11 +119,6 @@ final class BotbyeClient
     public function setPhishingConfig(BotbyePhishingConfig $config): void
     {
         $this->phishingConfig = $config;
-    }
-
-    public function setPhishingConf(BotbyePhishingConfig $config): void
-    {
-        $this->setPhishingConfig($config);
     }
 
     public function fetchImage(?string $origin, ?string $imageId = null): BotbyePhishingResponse
@@ -198,11 +197,11 @@ final class BotbyeClient
 
             clearstatcache(true, $flagFile);
 
-            $pid = (string) getmypid();
+            $pid = (string)getmypid();
             $needsInit = true;
 
             if (is_file($flagFile)) {
-                $content = (string) @file_get_contents($flagFile);
+                $content = (string)@file_get_contents($flagFile);
                 if (preg_match('/^pid:(\d+)/', $content, $m)) {
                     if ($m[1] === $pid) {
                         $needsInit = false;
@@ -229,7 +228,8 @@ final class BotbyeClient
         }
 
         $key = hash('sha256', rtrim($this->config->botbyeEndpoint, '/') . '|' . $this->config->serverKey);
-        $dir = rtrim((string) sys_get_temp_dir(), DIRECTORY_SEPARATOR);
+        $dir = rtrim((string)sys_get_temp_dir(), DIRECTORY_SEPARATOR);
+
         return $dir . DIRECTORY_SEPARATOR . 'botbye-php-sdk-init-' . $key . '.flag';
     }
 
@@ -237,17 +237,23 @@ final class BotbyeClient
      * @return array<string, mixed>
      * @throws BotbyeException
      */
-    private function sendRequest(string $url, JsonSerializable $body): array
+    private function sendPayload(string $url, array $payload): array
     {
         try {
             $response = $this->httpClient->request('POST', $url, [
                 'headers' => $this->buildHeaders(),
-                'json' => $body,
+                'json' => $payload,
                 'timeout' => $this->config->timeout,
             ]);
 
             $statusCode = $response->getStatusCode();
             $content = $response->getContent(false);
+
+            if ($statusCode >= 500) {
+                throw new BotbyeException(
+                    sprintf('[BotBye] connection error: HTTP %d', $statusCode)
+                );
+            }
 
             if ($statusCode >= 400) {
                 throw new BotbyeException(
@@ -271,6 +277,24 @@ final class BotbyeClient
         }
     }
 
+    private function classifyError(string $message): string
+    {
+        $lower = strtolower($message);
+        if (str_contains($lower, 'timeout') || str_contains($lower, 'timed out') || str_contains($lower, 'idle')) {
+            return 'timeout';
+        }
+        if (str_contains($lower, 'transport') || str_contains($lower, 'connect') || str_contains($lower, 'refused')
+            || str_contains($lower, 'empty reply') || str_contains($lower, 'reset')
+            || str_contains($lower, 'end of stream') || str_contains($lower, 'closed')) {
+            return 'connection error';
+        }
+        if (str_contains($lower, 'json') || str_contains($lower, 'decode') || str_contains($lower, 'parse')
+            || str_contains($lower, 'invalid')) {
+            return 'invalid json response';
+        }
+        return $lower;
+    }
+
     /**
      * @return array<string, string>
      */
@@ -280,7 +304,6 @@ final class BotbyeClient
             'Content-Type' => $this->config->contentType,
             'Module-Name' => BotbyeConfig::MODULE_NAME,
             'Module-Version' => BotbyeConfig::MODULE_VERSION,
-            'X-Botbye-Server-Key' => $this->config->serverKey,
         ];
     }
 
@@ -290,14 +313,11 @@ final class BotbyeClient
             $url = rtrim($this->config->botbyeEndpoint, '/') . '/init-request/v1';
             error_log('[BotBye] init-request: url = ' . $url);
 
-            $headers = $this->buildHeaders();
-            error_log('[BotBye] init-request: headers = ' . json_encode($headers));
-
             $body = ['serverKey' => $this->config->serverKey];
             error_log('[BotBye] init-request: body = ' . json_encode($body));
 
             $response = $this->httpClient->request('POST', $url, [
-                'headers' => $headers,
+                'headers' => $this->buildHeaders(),
                 'json' => $body,
                 'timeout' => $this->config->timeout,
             ]);
@@ -306,10 +326,7 @@ final class BotbyeClient
             error_log('[BotBye] init-request: HTTP status = ' . $statusCode);
 
             $content = $response->getContent(false);
-            error_log('[BotBye] init-request: raw response = ' . $content);
-
             $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
-            error_log('[BotBye] init-request: decoded response = ' . json_encode($decoded));
 
             if (($decoded['error'] ?? null) !== null || ($decoded['status'] ?? null) !== 'ok') {
                 error_log('[BotBye] init-request error = ' . ($decoded['error'] ?? 'null')
@@ -319,7 +336,6 @@ final class BotbyeClient
             }
         } catch (Exception $e) {
             error_log('[BotBye] init-request exception: ' . $e->getMessage());
-            error_log('[BotBye] init-request exception trace: ' . $e->getTraceAsString());
         }
     }
 
