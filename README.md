@@ -16,7 +16,7 @@ BotBye goes beyond fixed bot/ATO checks. Risk dimensions and metrics are fully d
 composer require botbye/botbye-php-sdk
 ```
 
-You also need a PSR-18 HTTP client and PSR-17 factories. Pick one:
+You also need a PSR-18 HTTP client and PSR-17 factories. Install one of the ready-made implementations:
 
 **Guzzle** (most common):
 ```bash
@@ -31,6 +31,11 @@ composer require symfony/http-client nyholm/psr7
 **Buzz**:
 ```bash
 composer require kriswallsmith/buzz nyholm/psr7
+```
+
+Or write a **custom adapter** for your HTTP transport (e.g. WordPress `wp_remote_request`) — in that case you only need a PSR-17 factory:
+```bash
+composer require nyholm/psr7
 ```
 
 ## Overview
@@ -88,6 +93,56 @@ $psr17Factory = new Psr17Factory();
 $client = new BotbyeClient(
     config: $config,
     httpClient: $httpClient,
+    requestFactory: $psr17Factory,
+    streamFactory: $psr17Factory,
+);
+```
+
+**Custom adapter** (e.g. WordPress `wp_remote_request`):
+
+```php
+use Botbye\Client\BotbyeClient;
+use Botbye\Client\BotbyeConfig;
+use Nyholm\Psr7\Factory\Psr17Factory;
+use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
+
+// Wrap any HTTP transport as a PSR-18 client
+class WpHttpClient implements ClientInterface
+{
+    public function sendRequest(RequestInterface $request): ResponseInterface
+    {
+        $response = wp_remote_request((string) $request->getUri(), [
+            'method'  => $request->getMethod(),
+            'headers' => array_map(
+                fn(array $v) => implode(', ', $v),
+                $request->getHeaders(),
+            ),
+            'body'    => (string) $request->getBody(),
+            'timeout' => 2,
+        ]);
+
+        if (is_wp_error($response)) {
+            throw new \RuntimeException($response->get_error_message());
+        }
+
+        $psr17 = new Psr17Factory();
+        $psrResponse = $psr17->createResponse(
+            wp_remote_retrieve_response_code($response),
+        );
+
+        return $psrResponse->withBody(
+            $psr17->createStream(wp_remote_retrieve_body($response)),
+        );
+    }
+}
+
+$psr17Factory = new Psr17Factory();
+
+$client = new BotbyeClient(
+    config: $config,
+    httpClient: new WpHttpClient(),
     requestFactory: $psr17Factory,
     streamFactory: $psr17Factory,
 );
