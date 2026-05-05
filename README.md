@@ -8,11 +8,29 @@ BotBye goes beyond fixed bot/ATO checks. Risk dimensions and metrics are fully d
 
 - PHP 8.1 or higher
 - Composer
+- Any PSR-18 compatible HTTP client (Guzzle, Symfony HttpClient, Buzz, etc.)
 
 ## Installation
 
 ```bash
 composer require botbye/botbye-php-sdk
+```
+
+You also need a PSR-18 HTTP client and PSR-17 factories. Pick one:
+
+**Guzzle** (most common):
+```bash
+composer require guzzlehttp/guzzle
+```
+
+**Symfony HttpClient**:
+```bash
+composer require symfony/http-client nyholm/psr7
+```
+
+**Buzz**:
+```bash
+composer require kriswallsmith/buzz nyholm/psr7
 ```
 
 ## Overview
@@ -33,15 +51,46 @@ Every evaluation call is also recorded as a **protection event** — logged to t
 
 ### 1. Initialize the Client
 
+The SDK uses PSR-18 / PSR-17 interfaces — bring your own HTTP client and message factories.
+
+**With Guzzle:**
+
 ```php
 use Botbye\Client\BotbyeClient;
 use Botbye\Client\BotbyeConfig;
+use GuzzleHttp\Client;
+use GuzzleHttp\Psr7\HttpFactory;
 
 $config = new BotbyeConfig(
     serverKey: 'your-server-key' // from https://botbye.com/docs/dashboard/project
 );
 
-$client = new BotbyeClient($config);
+$httpClient = new Client(['timeout' => 2.0]);
+$psr17Factory = new HttpFactory();
+
+$client = new BotbyeClient(
+    config: $config,
+    httpClient: $httpClient,
+    requestFactory: $psr17Factory,
+    streamFactory: $psr17Factory,
+);
+```
+
+**With Symfony HttpClient:**
+
+```php
+use Symfony\Component\HttpClient\Psr18Client;
+use Nyholm\Psr7\Factory\Psr17Factory;
+
+$httpClient = new Psr18Client();
+$psr17Factory = new Psr17Factory();
+
+$client = new BotbyeClient(
+    config: $config,
+    httpClient: $httpClient,
+    requestFactory: $psr17Factory,
+    streamFactory: $psr17Factory,
+);
 ```
 
 ### 2. Bot Validation (Level 1)
@@ -209,22 +258,17 @@ $response = $client->evaluate(new BotbyeRiskScoringEvent(
 $config = new BotbyeConfig(
     serverKey: 'your-server-key', // from https://app.botbye.com
     botbyeEndpoint: 'https://verify.botbye.com', // default
-    timeout: 1.0,       // connection + read timeout in seconds
-    max_duration: 2.0,  // max total request duration in seconds
 );
 ```
 
-### Custom HTTP Client
+Timeouts are configured on the HTTP client you provide:
 
 ```php
-use Symfony\Component\HttpClient\HttpClient;
+// Guzzle
+$httpClient = new \GuzzleHttp\Client(['timeout' => 2.0, 'connect_timeout' => 1.0]);
 
-$httpClient = HttpClient::create([
-    'timeout' => 2,
-    'max_redirects' => 0,
-]);
-
-$client = new BotbyeClient($config, $httpClient);
+// Symfony
+$httpClient = new Psr18Client(HttpClient::create(['timeout' => 2.0, 'max_duration' => 3.0]));
 ```
 
 ### PSR-3 Logger
@@ -236,7 +280,13 @@ use Monolog\Handler\StreamHandler;
 $logger = new Logger('botbye');
 $logger->pushHandler(new StreamHandler('/var/log/botbye.log', Logger::WARNING));
 
-$client = new BotbyeClient($config, logger: $logger);
+$client = new BotbyeClient(
+    config: $config,
+    httpClient: $httpClient,
+    requestFactory: $psr17Factory,
+    streamFactory: $psr17Factory,
+    logger: $logger,
+);
 ```
 
 ## Error Handling
@@ -290,6 +340,23 @@ class BotbyeMiddleware
         return $next($request);
     }
 }
+```
+
+Register the `BotbyeClient` in a service provider:
+
+```php
+// AppServiceProvider.php
+$this->app->singleton(BotbyeClient::class, function ($app) {
+    $httpClient = new \GuzzleHttp\Client(['timeout' => 2.0]);
+    $factory = new \GuzzleHttp\Psr7\HttpFactory();
+
+    return new BotbyeClient(
+        config: new BotbyeConfig(serverKey: config('services.botbye.key')),
+        httpClient: $httpClient,
+        requestFactory: $factory,
+        streamFactory: $factory,
+    );
+});
 ```
 
 ### Symfony Event Subscriber

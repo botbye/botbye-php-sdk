@@ -9,14 +9,12 @@ use InvalidArgumentException;
 final class BotbyeConfig
 {
     public const MODULE_NAME = 'PHP';
-    public const MODULE_VERSION = '2.0.0';
+    public const MODULE_VERSION = '2.0.1';
 
     public function __construct(
         public readonly string $serverKey,
         public readonly string $botbyeEndpoint = 'https://verify.botbye.com',
         public readonly string $contentType = 'application/json',
-        public readonly float $timeout = 1.0,        // connection and read timeout
-        public readonly float $max_duration = 2.0,   // maximum request duration
         public ?string $initGuardFlagFile = null,
     ) {
         if (empty($this->serverKey)) {

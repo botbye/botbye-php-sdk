@@ -16,8 +16,6 @@ final class BotbyeConfigTest extends TestCase
         $this->assertSame('test-key-123', $config->serverKey);
         $this->assertSame('https://verify.botbye.com', $config->botbyeEndpoint);
         $this->assertSame('application/json', $config->contentType);
-        $this->assertSame(1.0, $config->timeout);
-        $this->assertSame(2.0, $config->max_duration);
     }
 
     public function testConfigWithCustomEndpoint(): void
@@ -41,6 +39,6 @@ final class BotbyeConfigTest extends TestCase
     public function testModuleConstants(): void
     {
         $this->assertSame('PHP', BotbyeConfig::MODULE_NAME);
-        $this->assertSame('1.0.0', BotbyeConfig::MODULE_VERSION);
+        $this->assertSame('2.0.1', BotbyeConfig::MODULE_VERSION);
     }
 }

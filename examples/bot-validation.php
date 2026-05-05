@@ -9,9 +9,24 @@ use Botbye\Client\BotbyeConfig;
 use Botbye\Model\Decision;
 use Botbye\Model\BotbyeValidationEvent;
 
-// Initialize the client
+// Initialize the client with any PSR-18 HTTP client (Guzzle, Symfony HttpClient, Buzz, etc.)
+// Example with Guzzle:
+//   composer require guzzlehttp/guzzle
+//   $httpClient = new \GuzzleHttp\Client(['timeout' => 2.0]);
+//   $psr17Factory = new \GuzzleHttp\Psr7\HttpFactory();
+//
+// Example with Symfony HttpClient + PSR-18 adapter:
+//   composer require symfony/http-client nyholm/psr7
+//   $httpClient = (new \Symfony\Component\HttpClient\Psr18Client());
+//   $psr17Factory = new \Nyholm\Psr7\Factory\Psr17Factory();
+
 $config = new BotbyeConfig(serverKey: 'your-server-key-here'); // from https://app.botbye.com
-$client = new BotbyeClient($config);
+$client = new BotbyeClient(
+    config: $config,
+    httpClient: $httpClient,          // PSR-18 ClientInterface
+    requestFactory: $psr17Factory,    // PSR-17 RequestFactoryInterface
+    streamFactory: $psr17Factory,     // PSR-17 StreamFactoryInterface
+);
 
 // Flatten multi-value headers to comma-joined strings
 $headers = array_map(

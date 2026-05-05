@@ -11,14 +11,12 @@ use Botbye\Model\BotbyePhishingResponse;
 use Botbye\Model\BotbyeEvent;
 use Exception;
 use JsonException;
+use Psr\Http\Client\ClientExceptionInterface;
+use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\RequestFactoryInterface;
+use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
-use Symfony\Component\HttpClient\HttpClient;
-use Symfony\Contracts\HttpClient\Exception\ClientExceptionInterface;
-use Symfony\Contracts\HttpClient\Exception\RedirectionExceptionInterface;
-use Symfony\Contracts\HttpClient\Exception\ServerExceptionInterface;
-use Symfony\Contracts\HttpClient\Exception\TransportExceptionInterface;
-use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 final class BotbyeClient
 {
@@ -26,7 +24,6 @@ final class BotbyeClient
 
     private static bool $inited = false;
 
-    private HttpClientInterface $httpClient;
     private LoggerInterface $logger;
     private ?BotbyePhishingConfig $phishingConfig = null;
 
@@ -34,10 +31,11 @@ final class BotbyeClient
 
     public function __construct(
         private BotbyeConfig $config,
-        ?HttpClientInterface $httpClient = null,
+        private readonly ClientInterface $httpClient,
+        private readonly RequestFactoryInterface $requestFactory,
+        private readonly StreamFactoryInterface $streamFactory,
         ?LoggerInterface $logger = null,
     ) {
-        $this->httpClient = $httpClient ?? $this->createDefaultHttpClient();
         $this->logger = $logger ?? new NullLogger();
         $this->bypassResultBase64 = base64_encode(
             (string)json_encode(['config' => ['bypass_bot_validation' => true]])
@@ -112,7 +110,6 @@ final class BotbyeClient
     public function setConfig(BotbyeConfig $config): void
     {
         $this->config = $config;
-        $this->httpClient = $this->createDefaultHttpClient();
         $this->ensureInited();
     }
 
@@ -149,21 +146,19 @@ final class BotbyeClient
         string $assetType,
     ): BotbyePhishingResponse {
         try {
-            $response = $this->httpClient->request('GET', $url, [
-                'headers' => [
-                    'X-Api-Key' => $conf->apiKey,
-                    'Origin' => $origin ?? 'origin is missing',
-                ],
-                'timeout' => $conf->timeout,
-                'max_duration' => $conf->max_duration,
-            ]);
+            $request = $this->requestFactory->createRequest('GET', $url)
+                ->withHeader('X-Api-Key', $conf->apiKey)
+                ->withHeader('Origin', $origin ?? 'origin is missing');
+
+            $response = $this->httpClient->sendRequest($request);
 
             $statusCode = $response->getStatusCode();
-            $content = $response->getContent(false);
+            $content = (string)$response->getBody();
 
-            $headers = array_map(function ($values) {
-                return implode(', ', $values);
-            }, $response->getHeaders(false));
+            $headers = [];
+            foreach ($response->getHeaders() as $name => $values) {
+                $headers[$name] = implode(', ', $values);
+            }
 
             return new BotbyePhishingResponse(status: $statusCode, headers: $headers, body: $content);
         } catch (Exception $e) {
@@ -240,14 +235,20 @@ final class BotbyeClient
     private function sendPayload(string $url, array $payload): array
     {
         try {
-            $response = $this->httpClient->request('POST', $url, [
-                'headers' => $this->buildHeaders(),
-                'json' => $payload,
-                'timeout' => $this->config->timeout,
-            ]);
+            $jsonBody = json_encode($payload, JSON_THROW_ON_ERROR);
+
+            $request = $this->requestFactory->createRequest('POST', $url);
+            foreach ($this->buildHeaders() as $name => $value) {
+                $request = $request->withHeader($name, $value);
+            }
+            $request = $request->withBody(
+                $this->streamFactory->createStream($jsonBody)
+            );
+
+            $response = $this->httpClient->sendRequest($request);
 
             $statusCode = $response->getStatusCode();
-            $content = $response->getContent(false);
+            $content = (string)$response->getBody();
 
             if ($statusCode >= 500) {
                 throw new BotbyeException(
@@ -268,12 +269,10 @@ final class BotbyeClient
             }
 
             return $decoded;
-        } catch (TransportExceptionInterface $e) {
+        } catch (ClientExceptionInterface $e) {
             throw new BotbyeException('[BotBye] Transport error: ' . $e->getMessage(), 0, $e);
         } catch (JsonException $e) {
             throw new BotbyeException('[BotBye] JSON decode error: ' . $e->getMessage(), 0, $e);
-        } catch (ClientExceptionInterface|RedirectionExceptionInterface|ServerExceptionInterface $e) {
-            throw new BotbyeException('[BotBye] HTTP error: ' . $e->getMessage(), 0, $e);
         }
     }
 
@@ -316,16 +315,22 @@ final class BotbyeClient
             $body = ['serverKey' => $this->config->serverKey];
             error_log('[BotBye] init-request: body = ' . json_encode($body));
 
-            $response = $this->httpClient->request('POST', $url, [
-                'headers' => $this->buildHeaders(),
-                'json' => $body,
-                'timeout' => $this->config->timeout,
-            ]);
+            $jsonBody = json_encode($body, JSON_THROW_ON_ERROR);
+
+            $request = $this->requestFactory->createRequest('POST', $url);
+            foreach ($this->buildHeaders() as $name => $value) {
+                $request = $request->withHeader($name, $value);
+            }
+            $request = $request->withBody(
+                $this->streamFactory->createStream($jsonBody)
+            );
+
+            $response = $this->httpClient->sendRequest($request);
 
             $statusCode = $response->getStatusCode();
             error_log('[BotBye] init-request: HTTP status = ' . $statusCode);
 
-            $content = $response->getContent(false);
+            $content = (string)$response->getBody();
             $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
 
             if (($decoded['error'] ?? null) !== null || ($decoded['status'] ?? null) !== 'ok') {
@@ -337,14 +342,5 @@ final class BotbyeClient
         } catch (Exception $e) {
             error_log('[BotBye] init-request exception: ' . $e->getMessage());
         }
-    }
-
-    private function createDefaultHttpClient(): HttpClientInterface
-    {
-        return HttpClient::create([
-            'timeout' => $this->config->timeout,
-            'max_duration' => $this->config->max_duration,
-            'max_redirects' => 0,
-        ]);
     }
 }

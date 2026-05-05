@@ -11,9 +11,14 @@ use Botbye\Model\Decision;
 use Botbye\Model\EventStatus;
 use Botbye\Model\BotbyeRiskScoringEvent;
 
-// Initialize the client
+// Initialize the client with any PSR-18 HTTP client (Guzzle, Symfony HttpClient, Buzz, etc.)
 $config = new BotbyeConfig(serverKey: 'your-server-key-here'); // from https://app.botbye.com
-$client = new BotbyeClient($config);
+$client = new BotbyeClient(
+    config: $config,
+    httpClient: $httpClient,          // PSR-18 ClientInterface
+    requestFactory: $psr17Factory,    // PSR-17 RequestFactoryInterface
+    streamFactory: $psr17Factory,     // PSR-17 StreamFactoryInterface
+);
 
 $headers = array_map(
     fn($v) => is_array($v) ? implode(', ', $v) : $v,
