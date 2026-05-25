@@ -12,10 +12,10 @@ final class BotbyeEvaluateResponse implements \JsonSerializable
         public readonly ?float $riskScore = null,
         public readonly ?array $signals = null,
         public readonly ?array $scores = null,
-        public readonly BotbyeEvaluateConfig $config = new BotbyeEvaluateConfig(),
         public readonly ?BotbyeChallenge $challenge = null,
         public readonly ?BotbyeExtraData $extraData = null,
         public readonly ?BotbyeError $error = null,
+        public readonly ?string $botbyeResult = null,
     ) {
     }
 
@@ -28,7 +28,6 @@ final class BotbyeEvaluateResponse implements \JsonSerializable
     {
         $data = [
             'decision' => $this->decision->value,
-            'config' => $this->config->jsonSerialize(),
         ];
         if ($this->requestId !== null) {
             $data['request_id'] = $this->requestId;
@@ -51,6 +50,9 @@ final class BotbyeEvaluateResponse implements \JsonSerializable
         if ($this->error !== null) {
             $data['error'] = $this->error->jsonSerialize();
         }
+        if ($this->botbyeResult !== null) {
+            $data['botbye_result'] = $this->botbyeResult;
+        }
         return $data;
     }
 
@@ -62,21 +64,19 @@ final class BotbyeEvaluateResponse implements \JsonSerializable
             riskScore: isset($data['risk_score']) ? (float)$data['risk_score'] : null,
             signals: $data['signals'] ?? null,
             scores: $data['scores'] ?? null,
-            config: isset($data['config']) ? BotbyeEvaluateConfig::fromArray($data['config']) : new BotbyeEvaluateConfig(),
             challenge: isset($data['challenge']) ? BotbyeChallenge::fromArray($data['challenge']) : null,
             extraData: isset($data['extra_data']) ? BotbyeExtraData::fromArray($data['extra_data']) : null,
             error: isset($data['error']) ? BotbyeError::fromArray($data['error']) : null,
+            botbyeResult: $data['botbye_result'] ?? null,
         );
     }
 
     /**
-     * Error/bypass fallback — mirrors Kotlin BotbyeEvaluateResponse(config = bypassBotValidation=true, error = ...).
-     * Returns ALLOW with bypassBotValidation=true and the provided error message.
+     * Error/bypass fallback — returns ALLOW with the provided error message.
      */
     public static function bypass(string $errorMessage): self
     {
         return new self(
-            config: new BotbyeEvaluateConfig(bypassBotValidation: true),
             error: new BotbyeError($errorMessage),
         );
     }

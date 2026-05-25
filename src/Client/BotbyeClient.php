@@ -20,14 +20,10 @@ use Psr\Log\NullLogger;
 
 final class BotbyeClient
 {
-    public const RESULT_HEADER = 'X-Botbye-Result';
-
     private static bool $inited = false;
 
     private LoggerInterface $logger;
     private ?BotbyePhishingConfig $phishingConfig = null;
-
-    private readonly string $bypassResultBase64;
 
     public function __construct(
         private BotbyeConfig $config,
@@ -37,9 +33,6 @@ final class BotbyeClient
         ?LoggerInterface $logger = null,
     ) {
         $this->logger = $logger ?? new NullLogger();
-        $this->bypassResultBase64 = base64_encode(
-            (string)json_encode(['config' => ['bypass_bot_validation' => true]])
-        );
         $this->ensureInited();
     }
 
@@ -78,33 +71,6 @@ final class BotbyeClient
 
             return BotbyeEvaluateResponse::bypass($this->classifyError($e->getMessage()));
         }
-    }
-
-    /**
-     * Encodes evaluate response as base64 JSON for propagation to Level 2
-     * via the X-Botbye-Result (RESULT_HEADER) header.
-     * Mirrors Kotlin Botbye.encodeResult() and OpenResty M.encodeResult().
-     */
-    public function encodeResult(BotbyeEvaluateResponse $response): string
-    {
-        return base64_encode((string)json_encode([
-            'request_id' => $response->requestId,
-            'decision' => $response->decision->value,
-            'risk_score' => $response->riskScore,
-            'signals' => $response->signals,
-            'scores' => $response->scores,
-            'config' => $response->config,
-        ]));
-    }
-
-    /**
-     * Returns a pre-computed bypass result (base64 JSON with bypass_bot_validation=true).
-     * Use when request should not be validated (excluded URI, service token, etc).
-     * Mirrors Kotlin Botbye.bypassResult() and OpenResty M.propagateBypass().
-     */
-    public function bypassResult(): string
-    {
-        return $this->bypassResultBase64;
     }
 
     public function setConfig(BotbyeConfig $config): void
