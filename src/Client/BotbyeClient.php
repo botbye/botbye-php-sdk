@@ -92,9 +92,7 @@ final class BotbyeClient
         }
 
         $url = $conf->endpoint
-            . '/api/v1/phishing/' . rawurlencode($conf->accountId)
-            . '/projects/' . rawurlencode($conf->projectId)
-            . '/image';
+            . '/api/v1/phishing/image/' . rawurlencode($conf->clientKey);
 
         if ($imageId === null || $imageId === '') {
             $url .= '?format=png';
@@ -113,7 +111,6 @@ final class BotbyeClient
     ): BotbyePhishingResponse {
         try {
             $request = $this->requestFactory->createRequest('GET', $url)
-                ->withHeader('X-Api-Key', $conf->apiKey)
                 ->withHeader('Origin', $origin ?? 'origin is missing');
 
             $response = $this->httpClient->sendRequest($request);
@@ -129,7 +126,7 @@ final class BotbyeClient
             return new BotbyePhishingResponse(status: $statusCode, headers: $headers, body: $content);
         } catch (Exception $e) {
             $this->logger->warning('[BotBye] phishing ' . $assetType . ' exception occurred: ' . $e->getMessage());
-            return new BotbyePhishingResponse(error: new BotbyeError($e->getMessage()));
+            return new BotbyePhishingResponse(error: new BotbyeError($this->classifyError($e->getMessage())));
         }
     }
 

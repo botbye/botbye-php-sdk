@@ -259,6 +259,46 @@ $response = $client->evaluate(new BotbyeFullEvent(
 ));
 ```
 
+### 5. Phishing Image Tracking
+
+The phishing tracking pixel is embedded on a protected site; when a phishing clone copies the
+markup, the pixel is requested with the clone's `Origin`, which lets BotBye record a phishing
+candidate.
+
+The project is identified by a public, browser-safe `clientKey` in the URL path, so **no server
+key is sent** — phishing uses its own client key, separate from the evaluate `serverKey`.
+
+Configure phishing once (independently of the evaluate config), then forward the incoming `Origin`:
+
+```php
+use Botbye\Client\BotbyePhishingConfig;
+
+$client->setPhishingConfig(new BotbyePhishingConfig(
+    endpoint: 'https://verify.botbye.com', // default
+    clientKey: '<public-client-key>',
+));
+
+// Default PNG pixel
+$res = $client->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null);
+
+// SVG variant — pass an imageId
+$svg = $client->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null, 'hero-banner');
+
+$res->status;   // 200
+$res->headers;  // ['Content-Type' => 'image/png', ...]
+$res->body;     // string — raw image bytes to relay back to the browser
+$res->error;    // ?BotbyeError — non-null on transport failure
+```
+
+`fetchImage` returns `BotbyePhishingResponse`:
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | `int` | Upstream HTTP status (`0` on transport failure) |
+| `headers` | `array` | Response headers (e.g. `Content-Type`) |
+| `body` | `string` | Raw image bytes (PNG, or SVG when `imageId` is set) |
+| `error` | `?BotbyeError` | Normalized transport error: `timeout`, `connection error`, or `invalid json response` |
+
 ## Response
 
 `BotbyeEvaluateResponse` contains:
