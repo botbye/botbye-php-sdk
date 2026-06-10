@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Exception;
+namespace Botbye\Common;
 
 use RuntimeException;
 

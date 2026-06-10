@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Tests\Client;
+namespace Botbye\Tests\Protection;
 
-use Botbye\Client\BotbyeConfig;
+use Botbye\Protection\BotbyeConfig;
 use PHPUnit\Framework\TestCase;
 
 final class BotbyeConfigTest extends TestCase
@@ -39,6 +39,6 @@ final class BotbyeConfigTest extends TestCase
     public function testModuleConstants(): void
     {
         $this->assertSame('PHP', BotbyeConfig::MODULE_NAME);
-        $this->assertSame('2.0.1', BotbyeConfig::MODULE_VERSION);
+        $this->assertSame('3.0.0', BotbyeConfig::MODULE_VERSION);
     }
 }

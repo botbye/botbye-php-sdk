@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Model;
+namespace Botbye\Protection\Model;
 
 use JsonSerializable;
 

@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Botbye\Tests\Model;
 
-use Botbye\Model\BotbyeFullEvent;
-use Botbye\Model\BotbyeRiskScoringEvent;
-use Botbye\Model\BotbyeUserInfo;
-use Botbye\Model\BotbyeValidationEvent;
-use Botbye\Model\EventStatus;
+use Botbye\Protection\Model\BotbyeFullEvent;
+use Botbye\Protection\Model\BotbyeRiskScoringEvent;
+use Botbye\Protection\Model\BotbyeUserInfo;
+use Botbye\Protection\Model\BotbyeValidationEvent;
+use Botbye\Protection\Model\EventStatus;
 use PHPUnit\Framework\TestCase;
 
 final class BotbyeEventTest extends TestCase

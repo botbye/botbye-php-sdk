@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Client;
+namespace Botbye\Protection;
 
 use InvalidArgumentException;
 
 final class BotbyeConfig
 {
     public const MODULE_NAME = 'PHP';
-    public const MODULE_VERSION = '2.1.0';
+    public const MODULE_VERSION = '3.0.0';
 
     public function __construct(
         public readonly string $serverKey,

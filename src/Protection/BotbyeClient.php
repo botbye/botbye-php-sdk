@@ -2,13 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Client;
+namespace Botbye\Protection;
 
-use Botbye\Exception\BotbyeException;
-use Botbye\Model\BotbyeError;
-use Botbye\Model\BotbyeEvaluateResponse;
-use Botbye\Model\BotbyePhishingResponse;
-use Botbye\Model\BotbyeEvent;
+use Botbye\Common\BotbyeException;
+use Botbye\Common\ErrorClassifier;
+use Botbye\Protection\Model\BotbyeEvaluateResponse;
+use Botbye\Protection\Model\BotbyeEvent;
 use Exception;
 use JsonException;
 use Psr\Http\Client\ClientExceptionInterface;
@@ -18,12 +17,15 @@ use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 
+/**
+ * Evaluate client (Level 1/2 bot & risk scoring). Requires a server key and runs an init handshake
+ * on construction. Phishing image tracking lives in {@see \Botbye\Phishing\BotbyePhishingClient}.
+ */
 final class BotbyeClient
 {
     private static bool $inited = false;
 
     private LoggerInterface $logger;
-    private ?BotbyePhishingConfig $phishingConfig = null;
 
     public function __construct(
         private BotbyeConfig $config,
@@ -69,7 +71,7 @@ final class BotbyeClient
         } catch (Exception $e) {
             $this->logger->warning('[BotBye] exception occurred: ' . $e->getMessage());
 
-            return BotbyeEvaluateResponse::bypass($this->classifyError($e->getMessage()));
+            return BotbyeEvaluateResponse::bypass(ErrorClassifier::classify($e->getMessage()));
         }
     }
 
@@ -77,57 +79,6 @@ final class BotbyeClient
     {
         $this->config = $config;
         $this->ensureInited();
-    }
-
-    public function setPhishingConfig(BotbyePhishingConfig $config): void
-    {
-        $this->phishingConfig = $config;
-    }
-
-    public function fetchImage(?string $origin, ?string $imageId = null): BotbyePhishingResponse
-    {
-        $conf = $this->phishingConfig;
-        if ($conf === null) {
-            return new BotbyePhishingResponse(error: new BotbyeError('[BotBye] phishing config is not specified'));
-        }
-
-        $url = $conf->endpoint
-            . '/api/v1/phishing/image/' . rawurlencode($conf->clientKey);
-
-        if ($imageId === null || $imageId === '') {
-            $url .= '?format=png';
-            return $this->fetchPhishingAsset($conf, $url, $origin, 'png');
-        }
-
-        $url .= '?image_id=' . rawurlencode($imageId) . '&format=svg';
-        return $this->fetchPhishingAsset($conf, $url, $origin, 'svg');
-    }
-
-    private function fetchPhishingAsset(
-        BotbyePhishingConfig $conf,
-        string $url,
-        ?string $origin,
-        string $assetType,
-    ): BotbyePhishingResponse {
-        try {
-            $request = $this->requestFactory->createRequest('GET', $url)
-                ->withHeader('Origin', $origin ?? 'origin is missing');
-
-            $response = $this->httpClient->sendRequest($request);
-
-            $statusCode = $response->getStatusCode();
-            $content = (string)$response->getBody();
-
-            $headers = [];
-            foreach ($response->getHeaders() as $name => $values) {
-                $headers[$name] = implode(', ', $values);
-            }
-
-            return new BotbyePhishingResponse(status: $statusCode, headers: $headers, body: $content);
-        } catch (Exception $e) {
-            $this->logger->warning('[BotBye] phishing ' . $assetType . ' exception occurred: ' . $e->getMessage());
-            return new BotbyePhishingResponse(error: new BotbyeError($this->classifyError($e->getMessage())));
-        }
     }
 
     private function ensureInited(): void
@@ -237,24 +188,6 @@ final class BotbyeClient
         } catch (JsonException $e) {
             throw new BotbyeException('[BotBye] JSON decode error: ' . $e->getMessage(), 0, $e);
         }
-    }
-
-    private function classifyError(string $message): string
-    {
-        $lower = strtolower($message);
-        if (str_contains($lower, 'timeout') || str_contains($lower, 'timed out') || str_contains($lower, 'idle')) {
-            return 'timeout';
-        }
-        if (str_contains($lower, 'transport') || str_contains($lower, 'connect') || str_contains($lower, 'refused')
-            || str_contains($lower, 'empty reply') || str_contains($lower, 'reset')
-            || str_contains($lower, 'end of stream') || str_contains($lower, 'closed')) {
-            return 'connection error';
-        }
-        if (str_contains($lower, 'json') || str_contains($lower, 'decode') || str_contains($lower, 'parse')
-            || str_contains($lower, 'invalid')) {
-            return 'invalid json response';
-        }
-        return $lower;
     }
 
     /**

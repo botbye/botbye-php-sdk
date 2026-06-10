@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Client;
+namespace Botbye\Phishing;
 
 use InvalidArgumentException;
 

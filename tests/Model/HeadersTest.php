@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Botbye\Tests\Model;
 
-use Botbye\Model\Headers;
+use Botbye\Common\Headers;
 use PHPUnit\Framework\TestCase;
 
 final class HeadersTest extends TestCase

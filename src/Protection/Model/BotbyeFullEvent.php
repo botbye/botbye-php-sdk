@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Model;
+namespace Botbye\Protection\Model;
 
 /**
  * Combined Level 1+2: Bot validation + risk scoring in a single call.

@@ -4,9 +4,8 @@ declare(strict_types=1);
 
 namespace Botbye\Tests\Model;
 
-use Botbye\Model\BotbyeEvaluateConfig;
-use Botbye\Model\BotbyeEvaluateResponse;
-use Botbye\Model\Decision;
+use Botbye\Protection\Model\BotbyeEvaluateResponse;
+use Botbye\Protection\Model\Decision;
 use PHPUnit\Framework\TestCase;
 
 final class BotbyeEvaluateResponseTest extends TestCase

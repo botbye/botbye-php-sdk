@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Model;
+namespace Botbye\Phishing;
+
+use Botbye\Common\BotbyeError;
 
 final class BotbyePhishingResponse
 {

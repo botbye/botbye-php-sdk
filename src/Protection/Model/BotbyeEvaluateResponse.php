@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Model;
+namespace Botbye\Protection\Model;
+
+use Botbye\Common\BotbyeError;
 
 final class BotbyeEvaluateResponse implements \JsonSerializable
 {

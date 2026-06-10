@@ -61,8 +61,8 @@ The SDK uses PSR-18 / PSR-17 interfaces — bring your own HTTP client and messa
 **With Guzzle:**
 
 ```php
-use Botbye\Client\BotbyeClient;
-use Botbye\Client\BotbyeConfig;
+use Botbye\Protection\BotbyeClient;
+use Botbye\Protection\BotbyeConfig;
 use GuzzleHttp\Client;
 use GuzzleHttp\Psr7\HttpFactory;
 
@@ -101,8 +101,8 @@ $client = new BotbyeClient(
 **Custom adapter** (e.g. WordPress `wp_remote_request`):
 
 ```php
-use Botbye\Client\BotbyeClient;
-use Botbye\Client\BotbyeConfig;
+use Botbye\Protection\BotbyeClient;
+use Botbye\Protection\BotbyeConfig;
 use Nyholm\Psr7\Factory\Psr17Factory;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
@@ -153,8 +153,8 @@ $client = new BotbyeClient(
 Validate device tokens where user identity is not yet available — at the proxy layer or in a middleware before authentication.
 
 ```php
-use Botbye\Model\BotbyeValidationEvent;
-use Botbye\Model\Headers;
+use Botbye\Protection\Model\BotbyeValidationEvent;
+use Botbye\Common\Headers;
 
 $headers = Headers::fromArray(getallheaders());
 
@@ -177,10 +177,10 @@ if ($response->isBlocked()) {
 Evaluate risk and log events when user identity is known. Each call both scores the request **and** feeds the real-time metrics engine, so you should call `evaluate()` for every significant user action — not just when you need a decision.
 
 ```php
-use Botbye\Model\BotbyeRiskScoringEvent;
-use Botbye\Model\BotbyeUserInfo;
-use Botbye\Model\EventStatus;
-use Botbye\Model\Decision;
+use Botbye\Protection\Model\BotbyeRiskScoringEvent;
+use Botbye\Protection\Model\BotbyeUserInfo;
+use Botbye\Protection\Model\EventStatus;
+use Botbye\Protection\Model\Decision;
 
 $response = $client->evaluate(new BotbyeRiskScoringEvent(
     ip: $_SERVER['REMOTE_ADDR'],
@@ -247,7 +247,7 @@ $client->evaluate(new BotbyeRiskScoringEvent(
 Use when there is no separate proxy layer — validates the device token and evaluates risk in a single call.
 
 ```php
-use Botbye\Model\BotbyeFullEvent;
+use Botbye\Protection\Model\BotbyeFullEvent;
 
 $response = $client->evaluate(new BotbyeFullEvent(
     ip: $_SERVER['REMOTE_ADDR'],
@@ -265,24 +265,29 @@ The phishing tracking pixel is embedded on a protected site; when a phishing clo
 markup, the pixel is requested with the clone's `Origin`, which lets BotBye record a phishing
 candidate.
 
-The project is identified by a public, browser-safe `clientKey` in the URL path, so **no server
-key is sent** — phishing uses its own client key, separate from the evaluate `serverKey`.
-
-Configure phishing once (independently of the evaluate config), then forward the incoming `Origin`:
+Phishing lives in its own dedicated `BotbyePhishingClient` — **separate from the evaluate
+`BotbyeClient`**. The project is identified by a public, browser-safe `clientKey` in the URL path,
+so the client needs **no server key** and performs **no init handshake**; you can construct it
+standalone (it only needs a PSR-18 client and a PSR-17 request factory).
 
 ```php
-use Botbye\Client\BotbyePhishingConfig;
+use Botbye\Phishing\BotbyePhishingClient;
+use Botbye\Phishing\BotbyePhishingConfig;
 
-$client->setPhishingConfig(new BotbyePhishingConfig(
-    endpoint: 'https://verify.botbye.com', // default
-    clientKey: '<public-client-key>',
-));
+$phishing = new BotbyePhishingClient(
+    new BotbyePhishingConfig(
+        endpoint: 'https://verify.botbye.com', // default
+        clientKey: '<public-client-key>',
+    ),
+    $httpClient,     // PSR-18 ClientInterface
+    $requestFactory, // PSR-17 RequestFactoryInterface
+);
 
 // Default PNG pixel
-$res = $client->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null);
+$res = $phishing->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null);
 
 // SVG variant — pass an imageId
-$svg = $client->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null, 'hero-banner');
+$svg = $phishing->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null, 'hero-banner');
 
 $res->status;   // 200
 $res->headers;  // ['Content-Type' => 'image/png', ...]
@@ -399,9 +404,9 @@ if ($response->error !== null) {
 ```php
 namespace App\Http\Middleware;
 
-use Botbye\Client\BotbyeClient;
-use Botbye\Model\BotbyeValidationEvent;
-use Botbye\Model\Headers;
+use Botbye\Protection\BotbyeClient;
+use Botbye\Protection\Model\BotbyeValidationEvent;
+use Botbye\Common\Headers;
 use Closure;
 use Illuminate\Http\Request;
 
@@ -452,9 +457,9 @@ $this->app->singleton(BotbyeClient::class, function ($app) {
 ```php
 namespace App\EventSubscriber;
 
-use Botbye\Client\BotbyeClient;
-use Botbye\Model\BotbyeValidationEvent;
-use Botbye\Model\Headers;
+use Botbye\Protection\BotbyeClient;
+use Botbye\Protection\Model\BotbyeValidationEvent;
+use Botbye\Common\Headers;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;

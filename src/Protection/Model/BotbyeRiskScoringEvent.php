@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Botbye\Model;
+namespace Botbye\Protection\Model;
 
 /**
  * Level 2: Risk scoring (middleware, post-authentication).
