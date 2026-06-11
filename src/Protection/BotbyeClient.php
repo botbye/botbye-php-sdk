@@ -6,6 +6,7 @@ namespace Botbye\Protection;
 
 use Botbye\Common\BotbyeException;
 use Botbye\Common\ErrorClassifier;
+use Botbye\Common\ModuleInfo;
 use Botbye\Protection\Model\BotbyeEvaluateResponse;
 use Botbye\Protection\Model\BotbyeEvent;
 use Exception;
@@ -59,8 +60,8 @@ final class BotbyeClient
                 [
                     'server_key' => $this->config->serverKey,
                     'integration' => [
-                        'module_name' => BotbyeConfig::MODULE_NAME,
-                        'module_version' => BotbyeConfig::MODULE_VERSION,
+                        'module_name' => ModuleInfo::NAME,
+                        'module_version' => ModuleInfo::VERSION,
                     ],
                 ]
             );
@@ -197,8 +198,8 @@ final class BotbyeClient
     {
         return [
             'Content-Type' => $this->config->contentType,
-            'Module-Name' => BotbyeConfig::MODULE_NAME,
-            'Module-Version' => BotbyeConfig::MODULE_VERSION,
+            'Module-Name' => ModuleInfo::NAME,
+            'Module-Version' => ModuleInfo::VERSION,
         ];
     }
 

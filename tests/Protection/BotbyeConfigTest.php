@@ -35,10 +35,4 @@ final class BotbyeConfigTest extends TestCase
 
         new BotbyeConfig(serverKey: '');
     }
-
-    public function testModuleConstants(): void
-    {
-        $this->assertSame('PHP', BotbyeConfig::MODULE_NAME);
-        $this->assertSame('3.0.0', BotbyeConfig::MODULE_VERSION);
-    }
 }

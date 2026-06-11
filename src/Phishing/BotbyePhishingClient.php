@@ -6,6 +6,7 @@ namespace Botbye\Phishing;
 
 use Botbye\Common\BotbyeError;
 use Botbye\Common\ErrorClassifier;
+use Botbye\Common\ModuleInfo;
 use Exception;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
@@ -52,7 +53,9 @@ final class BotbyePhishingClient
     ): BotbyePhishingResponse {
         try {
             $request = $this->requestFactory->createRequest('GET', $url)
-                ->withHeader('Origin', $origin ?? 'origin is missing');
+                ->withHeader('Origin', $origin ?? 'origin is missing')
+                ->withHeader('Module-Name', ModuleInfo::NAME)
+                ->withHeader('Module-Version', ModuleInfo::VERSION);
 
             $response = $this->httpClient->sendRequest($request);
 

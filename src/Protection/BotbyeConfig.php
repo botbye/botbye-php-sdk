@@ -8,9 +8,6 @@ use InvalidArgumentException;
 
 final class BotbyeConfig
 {
-    public const MODULE_NAME = 'PHP';
-    public const MODULE_VERSION = '3.0.0';
-
     public function __construct(
         public readonly string $serverKey,
         public readonly string $botbyeEndpoint = 'https://verify.botbye.com',
