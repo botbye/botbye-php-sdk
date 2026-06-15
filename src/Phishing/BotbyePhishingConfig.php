@@ -16,6 +16,8 @@ final class BotbyePhishingConfig
     public function __construct(
         string $endpoint,
         string $clientKey,
+        /** Overrides where the once-per-process init-handshake guard flag is stored (default: temp dir). */
+        public readonly ?string $initGuardFlagFile = null,
     ) {
         $normalizedEndpoint = rtrim($endpoint, '/');
         $this->endpoint = $normalizedEndpoint !== '' ? $normalizedEndpoint : self::DEFAULT_ENDPOINT;

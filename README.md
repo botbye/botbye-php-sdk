@@ -267,8 +267,11 @@ candidate.
 
 Phishing lives in its own dedicated `BotbyePhishingClient` — **separate from the evaluate
 `BotbyeClient`**. The project is identified by a public, browser-safe `clientKey` in the URL path,
-so the client needs **no server key** and performs **no init handshake**; you can construct it
-standalone (it only needs a PSR-18 client and a PSR-17 request factory).
+so the client needs **no server key**; you can construct it standalone (it only needs a PSR-18 client
+and a PSR-17 request factory). On construction it fires a best-effort server-integration init
+handshake (`POST /api/v1/phishing/init-request/v1/{clientKey}`, guarded to run once per process)
+reporting this module, and `fetchImage` proxies the pixel via the server `/server` route so the
+backend can attribute it to this module even when the browser never reaches BotBye directly.
 
 ```php
 use Botbye\Phishing\BotbyePhishingClient;
