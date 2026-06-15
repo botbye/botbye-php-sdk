@@ -7,6 +7,7 @@ namespace Botbye\Phishing;
 use Botbye\Common\BotbyeError;
 use Botbye\Common\ErrorClassifier;
 use Botbye\Common\ModuleInfo;
+use Closure;
 use Exception;
 use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
@@ -31,14 +32,41 @@ final class BotbyePhishingClient
 
     private LoggerInterface $logger;
 
+    /**
+     * @param (callable(mixed): ?string)|null $originExtractor extracts the {@code Origin} header from
+     *        a raw framework request; enables {@see fetchImageFromRequest}.
+     */
     public function __construct(
         private readonly BotbyePhishingConfig $config,
         private readonly ClientInterface $httpClient,
         private readonly RequestFactoryInterface $requestFactory,
         ?LoggerInterface $logger = null,
+        private readonly ?Closure $originExtractor = null,
     ) {
         $this->logger = $logger ?? new NullLogger();
         $this->ensureInited();
+    }
+
+    /**
+     * Factory for framework SDKs: bind an Origin extractor so callers pass only their raw request
+     * object to {@see fetchImageFromRequest}.
+     *
+     * @param callable(mixed): ?string $originExtractor
+     */
+    public static function withExtractor(
+        BotbyePhishingConfig $config,
+        ClientInterface $httpClient,
+        RequestFactoryInterface $requestFactory,
+        callable $originExtractor,
+        ?LoggerInterface $logger = null,
+    ): self {
+        return new self(
+            $config,
+            $httpClient,
+            $requestFactory,
+            $logger,
+            Closure::fromCallable($originExtractor),
+        );
     }
 
     public function fetchImage(?string $origin, ?string $imageId = null): BotbyePhishingResponse
@@ -54,6 +82,23 @@ final class BotbyePhishingClient
 
         $url .= '?image_id=' . rawurlencode($imageId) . '&format=svg';
         return $this->fetchPhishingAsset($url, $origin, 'svg');
+    }
+
+    /**
+     * Fetch the tracking pixel from a raw framework request (requires an Origin extractor).
+     */
+    public function fetchImageFromRequest(mixed $request, ?string $imageId = null): BotbyePhishingResponse
+    {
+        if ($this->originExtractor === null) {
+            throw new \Botbye\Common\BotbyeException(
+                '[BotBye] no phishing extractor configured; use BotbyePhishingClient::withExtractor() to fetch from a raw request'
+            );
+        }
+
+        /** @var ?string $origin */
+        $origin = ($this->originExtractor)($request);
+
+        return $this->fetchImage($origin, $imageId);
     }
 
     private function fetchPhishingAsset(

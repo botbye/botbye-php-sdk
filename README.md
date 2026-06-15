@@ -400,7 +400,60 @@ if ($response->error !== null) {
 
 `BotbyeException` is only thrown for unrecoverable errors during `sendPayload()` — the client catches these internally and returns the bypass response.
 
-## Framework Integration
+## Request Extractors (framework integration)
+
+Instead of building events field-by-field at every call site, describe **once** how to turn your
+framework's request into a `BotbyeRequestInfo`, then pass only the raw request to the `evaluate*`
+methods. Build the client with `BotbyeClient::withExtractor(...)` — the extractor is any
+`callable(mixed): BotbyeRequestInfo`:
+
+```php
+use Botbye\Protection\BotbyeClient;
+use Botbye\Protection\Model\BotbyeRequestInfo;
+use Botbye\Common\Headers;
+use Illuminate\Http\Request;
+
+$client = BotbyeClient::withExtractor(
+    config: $config,
+    httpClient: $httpClient,
+    requestFactory: $psr17Factory,
+    streamFactory: $psr17Factory,
+    requestInfoExtractor: fn (Request $request) => new BotbyeRequestInfo(
+        ip: $request->ip(),
+        headers: Headers::fromArray($request->headers->all())->jsonSerialize(),
+        token: $request->query('botbye_token'),
+        requestMethod: $request->method(),
+        requestUri: $request->getRequestUri(),
+    ),
+);
+```
+
+Now call sites pass only the raw request (plus user/event for Level 2):
+
+```php
+use Botbye\Protection\Model\BotbyeUserInfo;
+use Botbye\Protection\Model\EventStatus;
+
+// Level 1 — bot validation
+$l1 = $client->evaluateValidation($request);
+
+// Level 2 — risk scoring & event logging
+$l2 = $client->evaluateRiskScoring(
+    request: $request,
+    user: new BotbyeUserInfo(accountId: $userId),
+    eventType: 'LOGIN',
+    eventStatus: EventStatus::SUCCESSFUL,
+    botbyeResult: $l1->botbyeResult,
+);
+
+// Level 1+2 combined (no separate proxy)
+$full = $client->evaluateFull($request, new BotbyeUserInfo(accountId: $userId), 'LOGIN', EventStatus::FAILED);
+```
+
+An explicit `token` argument overrides the one returned by the extractor. The
+`HeaderUtils::getIpFromHeaders($headers)` helper is handy inside extractors when the IP sits behind a
+proxy. The explicit-event API (`new BotbyeClient(...)` + `evaluate(new BotbyeValidationEvent(...))`)
+remains available with no extractor.
 
 ### Laravel Middleware
 
@@ -408,8 +461,6 @@ if ($response->error !== null) {
 namespace App\Http\Middleware;
 
 use Botbye\Protection\BotbyeClient;
-use Botbye\Protection\Model\BotbyeValidationEvent;
-use Botbye\Common\Headers;
 use Closure;
 use Illuminate\Http\Request;
 
@@ -419,17 +470,7 @@ class BotbyeMiddleware
 
     public function handle(Request $request, Closure $next)
     {
-        $headers = Headers::fromArray($request->headers->all());
-
-        $response = $this->botbye->evaluate(new BotbyeValidationEvent(
-            ip: $request->ip(),
-            token: $request->query('botbye_token', ''),
-            headers: $headers->jsonSerialize(),
-            requestMethod: $request->method(),
-            requestUri: $request->getRequestUri(),
-        ));
-
-        if ($response->isBlocked()) {
+        if ($this->botbye->evaluateValidation($request)->isBlocked()) {
             abort(403, 'Access denied');
         }
 
@@ -438,19 +479,30 @@ class BotbyeMiddleware
 }
 ```
 
-Register the `BotbyeClient` in a service provider:
+Register the extractor-bound `BotbyeClient` in a service provider:
 
 ```php
 // AppServiceProvider.php
+use Botbye\Protection\Model\BotbyeRequestInfo;
+use Botbye\Common\Headers;
+use Illuminate\Http\Request;
+
 $this->app->singleton(BotbyeClient::class, function ($app) {
     $httpClient = new \GuzzleHttp\Client(['timeout' => 2.0]);
     $factory = new \GuzzleHttp\Psr7\HttpFactory();
 
-    return new BotbyeClient(
+    return BotbyeClient::withExtractor(
         config: new BotbyeConfig(serverKey: config('services.botbye.key')),
         httpClient: $httpClient,
         requestFactory: $factory,
         streamFactory: $factory,
+        requestInfoExtractor: fn (Request $request) => new BotbyeRequestInfo(
+            ip: $request->ip(),
+            headers: Headers::fromArray($request->headers->all())->jsonSerialize(),
+            token: $request->query('botbye_token'),
+            requestMethod: $request->method(),
+            requestUri: $request->getRequestUri(),
+        ),
     );
 });
 ```
@@ -461,13 +513,12 @@ $this->app->singleton(BotbyeClient::class, function ($app) {
 namespace App\EventSubscriber;
 
 use Botbye\Protection\BotbyeClient;
-use Botbye\Protection\Model\BotbyeValidationEvent;
-use Botbye\Common\Headers;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 use Symfony\Component\HttpKernel\KernelEvents;
 
+// Build $botbye via BotbyeClient::withExtractor(..., requestInfoExtractor: fn (Request $r) => new BotbyeRequestInfo(...))
 class BotbyeSubscriber implements EventSubscriberInterface
 {
     public function __construct(private BotbyeClient $botbye) {}
@@ -479,23 +530,40 @@ class BotbyeSubscriber implements EventSubscriberInterface
 
     public function onKernelRequest(RequestEvent $event): void
     {
-        $request = $event->getRequest();
-        $headers = Headers::fromArray($request->headers->all());
-
-        $response = $this->botbye->evaluate(new BotbyeValidationEvent(
-            ip: $request->getClientIp(),
-            token: $request->query->get('botbye_token', ''),
-            headers: $headers->jsonSerialize(),
-            requestMethod: $request->getMethod(),
-            requestUri: $request->getRequestUri(),
-        ));
-
-        if ($response->isBlocked()) {
+        if ($this->botbye->evaluateValidation($event->getRequest())->isBlocked()) {
             throw new AccessDeniedHttpException('Access denied');
         }
     }
 }
 ```
+
+### Phishing from a raw request
+
+The phishing client mirrors the same pattern — bind an `Origin` extractor once, then pass the raw
+request to `fetchImageFromRequest`:
+
+```php
+use Botbye\Phishing\BotbyePhishingClient;
+use Botbye\Phishing\BotbyePhishingConfig;
+
+$phishing = BotbyePhishingClient::withExtractor(
+    config: new BotbyePhishingConfig(clientKey: '<public-client-key>'),
+    httpClient: $httpClient,
+    requestFactory: $requestFactory,
+    originExtractor: fn ($request) => $request->headers->get('Origin'),
+);
+
+$res = $phishing->fetchImageFromRequest($request);                 // PNG
+$svg = $phishing->fetchImageFromRequest($request, 'hero-banner');  // SVG
+```
+
+## Helpers
+
+| Helper | Description |
+|---|---|
+| `HeaderUtils::getIpFromHeaders($headers)` | Extract the client IP from headers (`x-forwarded-for` first hop, then `x-real-ip`). |
+| `BotbyeEvaluateResponse::bypass($message)` | Build a fail-open response (`ALLOW` + `error`) for your own short-circuit paths. |
+| `BotbyeErrors` | Normalized error message constants: `SDK_ERROR`, `UNKNOWN_ERROR`, `TIMEOUT_ERROR`, `CONNECTION_ERROR`, `JSON_ERROR`. |
 
 ## Testing
 
