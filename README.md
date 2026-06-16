@@ -286,11 +286,9 @@ $phishing = new BotbyePhishingClient(
     $requestFactory, // PSR-17 RequestFactoryInterface
 );
 
-// Default PNG pixel
-$res = $phishing->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null);
-
-// SVG variant — pass an imageId
-$svg = $phishing->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null, 'hero-banner');
+// Proxy the browser's pixel request: forward its original query verbatim (it carries
+// format / image_id and the JS tag's module_name / module_version).
+$res = $phishing->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null, $_GET);
 
 $res->status;   // 200
 $res->headers;  // ['Content-Type' => 'image/png', ...]
@@ -304,7 +302,7 @@ $res->error;    // ?BotbyeError — non-null on transport failure
 |---|---|---|
 | `status` | `int` | Upstream HTTP status (`0` on transport failure) |
 | `headers` | `array` | Response headers (e.g. `Content-Type`) |
-| `body` | `string` | Raw image bytes (PNG, or SVG when `imageId` is set) |
+| `body` | `string` | Raw image bytes (PNG or SVG, per the forwarded `format` query param) |
 | `error` | `?BotbyeError` | Normalized transport error: `timeout`, `connection error`, or `invalid json response` |
 
 ## Response
@@ -450,10 +448,9 @@ $l2 = $client->evaluateRiskScoring(
 $full = $client->evaluateFull($request, new BotbyeUserInfo(accountId: $userId), 'LOGIN', EventStatus::FAILED);
 ```
 
-An explicit `token` argument overrides the one returned by the extractor. The
-`HeaderUtils::getIpFromHeaders($headers)` helper is handy inside extractors when the IP sits behind a
-proxy. The explicit-event API (`new BotbyeClient(...)` + `evaluate(new BotbyeValidationEvent(...))`)
-remains available with no extractor.
+An explicit `token` argument overrides the one returned by the extractor. The explicit-event API
+(`new BotbyeClient(...)` + `evaluate(new BotbyeValidationEvent(...))`) remains available with no
+extractor.
 
 ### Laravel Middleware
 
@@ -553,15 +550,14 @@ $phishing = BotbyePhishingClient::withExtractor(
     originExtractor: fn ($request) => $request->headers->get('Origin'),
 );
 
-$res = $phishing->fetchImageFromRequest($request);                 // PNG
-$svg = $phishing->fetchImageFromRequest($request, 'hero-banner');  // SVG
+// Origin via the extractor; forward the browser's pixel query for attribution
+$res = $phishing->fetchImageFromRequest($request, $request->getQueryParams());
 ```
 
 ## Helpers
 
 | Helper | Description |
 |---|---|
-| `HeaderUtils::getIpFromHeaders($headers)` | Extract the client IP from headers (`x-forwarded-for` first hop, then `x-real-ip`). |
 | `BotbyeEvaluateResponse::bypass($message)` | Build a fail-open response (`ALLOW` + `error`) for your own short-circuit paths. |
 | `BotbyeErrors` | Normalized error message constants: `SDK_ERROR`, `UNKNOWN_ERROR`, `TIMEOUT_ERROR`, `CONNECTION_ERROR`, `JSON_ERROR`. |
 

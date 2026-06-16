@@ -69,25 +69,30 @@ final class BotbyePhishingClient
         );
     }
 
-    public function fetchImage(?string $origin, ?string $imageId = null): BotbyePhishingResponse
+    /**
+     * @param array<string, string> $query Forwarded verbatim to the {@code /server} route — pass the
+     *        browser's original pixel query (which carries {@code format}, {@code image_id}, and the
+     *        JS tag's {@code module_name} / {@code module_version}).
+     */
+    public function fetchImage(?string $origin, array $query = []): BotbyePhishingResponse
     {
         $conf = $this->config;
         $url = $conf->endpoint
             . '/api/v1/phishing/image/' . rawurlencode($conf->clientKey) . '/server';
 
-        if ($imageId === null || $imageId === '') {
-            $url .= '?format=png';
-            return $this->fetchPhishingAsset($url, $origin, 'png');
+        if (!empty($query)) {
+            $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
         }
 
-        $url .= '?image_id=' . rawurlencode($imageId) . '&format=svg';
-        return $this->fetchPhishingAsset($url, $origin, 'svg');
+        return $this->fetchPhishingAsset($url, $origin);
     }
 
     /**
      * Fetch the tracking pixel from a raw framework request (requires an Origin extractor).
+     *
+     * @param array<string, string> $query Forwarded browser pixel query (see {@see fetchImage}).
      */
-    public function fetchImageFromRequest(mixed $request, ?string $imageId = null): BotbyePhishingResponse
+    public function fetchImageFromRequest(mixed $request, array $query = []): BotbyePhishingResponse
     {
         if ($this->originExtractor === null) {
             throw new \Botbye\Common\BotbyeException(
@@ -98,13 +103,12 @@ final class BotbyePhishingClient
         /** @var ?string $origin */
         $origin = ($this->originExtractor)($request);
 
-        return $this->fetchImage($origin, $imageId);
+        return $this->fetchImage($origin, $query);
     }
 
     private function fetchPhishingAsset(
         string $url,
         ?string $origin,
-        string $assetType,
     ): BotbyePhishingResponse {
         try {
             $request = $this->requestFactory->createRequest('GET', $url)
@@ -124,7 +128,7 @@ final class BotbyePhishingClient
 
             return new BotbyePhishingResponse(status: $statusCode, headers: $headers, body: $content);
         } catch (Exception $e) {
-            $this->logger->warning('[BotBye] phishing ' . $assetType . ' exception occurred: ' . $e->getMessage());
+            $this->logger->warning('[BotBye] phishing image exception occurred: ' . $e->getMessage());
             return new BotbyePhishingResponse(error: new BotbyeError(ErrorClassifier::classify($e->getMessage())));
         }
     }
@@ -159,13 +163,13 @@ final class BotbyePhishingClient
 
             clearstatcache(true, $flagFile);
 
-            $pid = (string)getmypid();
+            $token = $this->processToken();
             $needsInit = true;
 
             if (is_file($flagFile)) {
                 $content = (string)@file_get_contents($flagFile);
-                if (preg_match('/^pid:(\d+)/', $content, $m)) {
-                    if ($m[1] === $pid) {
+                if (preg_match('/^token:(.+)$/m', $content, $m)) {
+                    if ($m[1] === $token) {
                         $needsInit = false;
                     }
                 }
@@ -175,12 +179,40 @@ final class BotbyePhishingClient
 
             if ($needsInit) {
                 $this->initRequest();
-                @file_put_contents($flagFile, "pid:$pid\nat:" . time() . "\n", LOCK_EX);
+                @file_put_contents($flagFile, "token:$token\nat:" . time() . "\n", LOCK_EX);
             }
         } finally {
             @flock($lockHandle, LOCK_UN);
             @fclose($lockHandle);
         }
+    }
+
+    /**
+     * Identifies this process incarnation for the init guard. The pid alone is not enough: a process
+     * manager (or a container, where the SAPI is always pid 1) reuses pids across restarts, so a stale
+     * guard file left in a persistent temp dir would suppress the handshake for the new process. Pairing
+     * the pid with the kernel process start time (field 22 of {@code /proc/self/stat}) makes the token
+     * unique per incarnation; on platforms without procfs it degrades to pid-only.
+     */
+    private function processToken(): string
+    {
+        $pid = (string)getmypid();
+
+        $stat = @file_get_contents('/proc/self/stat');
+        if ($stat !== false) {
+            // comm (field 2) is parenthesised and may contain spaces, so parse after the final ')':
+            // the remaining whitespace-separated fields start at field 3 (state), making starttime
+            // (field 22) the element at index 19.
+            $rparen = strrpos($stat, ')');
+            if ($rparen !== false) {
+                $rest = preg_split('/\s+/', trim(substr($stat, $rparen + 1)));
+                if (is_array($rest) && isset($rest[19]) && $rest[19] !== '') {
+                    return $pid . '-' . $rest[19];
+                }
+            }
+        }
+
+        return $pid;
     }
 
     private function getInitGuardFlagFilePath(): string
