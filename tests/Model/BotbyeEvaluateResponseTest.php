@@ -18,7 +18,6 @@ final class BotbyeEvaluateResponseTest extends TestCase
             'risk_score' => 0.95,
             'signals' => ['bot_detected'],
             'scores' => ['bot' => 0.95, 'ato' => 0.3],
-            'config' => ['bypass_bot_validation' => false],
             'error' => null,
         ];
 
@@ -29,7 +28,6 @@ final class BotbyeEvaluateResponseTest extends TestCase
         $this->assertSame(0.95, $response->riskScore);
         $this->assertSame(['bot_detected'], $response->signals);
         $this->assertSame(['bot' => 0.95, 'ato' => 0.3], $response->scores);
-        $this->assertFalse($response->config->bypassBotValidation);
         $this->assertNull($response->error);
         $this->assertTrue($response->isBlocked());
     }
@@ -51,7 +49,6 @@ final class BotbyeEvaluateResponseTest extends TestCase
         $response = BotbyeEvaluateResponse::bypass('[BotBye] network error');
 
         $this->assertSame(Decision::ALLOW, $response->decision);
-        $this->assertTrue($response->config->bypassBotValidation);
         $this->assertSame('[BotBye] network error', $response->error?->message);
         $this->assertNull($response->requestId);
         $this->assertNull($response->riskScore);
@@ -66,8 +63,8 @@ final class BotbyeEvaluateResponseTest extends TestCase
         $json = $response->jsonSerialize();
 
         $this->assertArrayHasKey('decision', $json);
-        $this->assertArrayHasKey('config', $json);
         $this->assertArrayHasKey('error', $json);
+        $this->assertArrayNotHasKey('config', $json);
         $this->assertArrayNotHasKey('request_id', $json);
         $this->assertArrayNotHasKey('risk_score', $json);
         $this->assertArrayNotHasKey('signals', $json);
@@ -82,7 +79,6 @@ final class BotbyeEvaluateResponseTest extends TestCase
             'risk_score' => 0.0,
             'signals' => [],
             'scores' => [],
-            'config' => ['bypass_bot_validation' => false],
         ];
 
         $response = BotbyeEvaluateResponse::fromArray($data);
@@ -93,7 +89,6 @@ final class BotbyeEvaluateResponseTest extends TestCase
         $this->assertArrayHasKey('risk_score', $json);
         $this->assertArrayHasKey('signals', $json);
         $this->assertArrayHasKey('scores', $json);
-        $this->assertArrayHasKey('config', $json);
     }
 
     public function testIsBlockedOnlyForBlockDecision(): void

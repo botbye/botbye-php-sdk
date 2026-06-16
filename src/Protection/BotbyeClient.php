@@ -6,6 +6,7 @@ namespace Botbye\Protection;
 
 use Botbye\Common\BotbyeException;
 use Botbye\Common\ErrorClassifier;
+use Botbye\Common\InitGuard;
 use Botbye\Common\ModuleInfo;
 use Botbye\Protection\Model\BotbyeEvaluateResponse;
 use Botbye\Protection\Model\BotbyeEvent;
@@ -31,7 +32,7 @@ use Psr\Log\NullLogger;
  */
 final class BotbyeClient
 {
-    private static bool $inited = false;
+    use InitGuard;
 
     private LoggerInterface $logger;
 
@@ -83,6 +84,9 @@ final class BotbyeClient
      */
     public function evaluate(BotbyeEvent $request): BotbyeEvaluateResponse
     {
+        // getUrlToken() returns the device token verbatim as the query string (the JS tag emits it
+        // pre-formatted as `key=value`), or null when absent; an empty token is normalized to null
+        // upstream so no dangling "?" is appended.
         $token = $request->getUrlToken();
         $url = sprintf(
             '%s/api/v1/protect/evaluate%s',
@@ -209,63 +213,14 @@ final class BotbyeClient
 
     private function ensureInited(): void
     {
-        if (self::$inited) {
-            return;
-        }
+        $guardKey = hash('sha256', rtrim($this->config->botbyeEndpoint, '/') . '|' . $this->config->serverKey);
+        $flagFile = $this->initGuardFlagFilePath(
+            $this->config->initGuardFlagFile,
+            'botbye-php-sdk-init-',
+            $guardKey,
+        );
 
-        $flagFile = $this->getInitGuardFlagFilePath();
-        $lockFile = $flagFile . '.lock';
-
-        $lockHandle = @fopen($lockFile, 'c');
-        if ($lockHandle === false) {
-            self::$inited = true;
-            $this->initRequest();
-            return;
-        }
-
-        try {
-            if (!@flock($lockHandle, LOCK_EX)) {
-                self::$inited = true;
-                $this->initRequest();
-                return;
-            }
-
-            clearstatcache(true, $flagFile);
-
-            $pid = (string)getmypid();
-            $needsInit = true;
-
-            if (is_file($flagFile)) {
-                $content = (string)@file_get_contents($flagFile);
-                if (preg_match('/^pid:(\d+)/', $content, $m)) {
-                    if ($m[1] === $pid) {
-                        $needsInit = false;
-                    }
-                }
-            }
-
-            self::$inited = true;
-
-            if ($needsInit) {
-                $this->initRequest();
-                @file_put_contents($flagFile, "pid:$pid\nat:" . time() . "\n", LOCK_EX);
-            }
-        } finally {
-            @flock($lockHandle, LOCK_UN);
-            @fclose($lockHandle);
-        }
-    }
-
-    private function getInitGuardFlagFilePath(): string
-    {
-        if ($this->config->initGuardFlagFile !== null && $this->config->initGuardFlagFile !== '') {
-            return $this->config->initGuardFlagFile;
-        }
-
-        $key = hash('sha256', rtrim($this->config->botbyeEndpoint, '/') . '|' . $this->config->serverKey);
-        $dir = rtrim((string)sys_get_temp_dir(), DIRECTORY_SEPARATOR);
-
-        return $dir . DIRECTORY_SEPARATOR . 'botbye-php-sdk-init-' . $key . '.flag';
+        $this->runInitGuardOnce($guardKey, $flagFile, fn () => $this->initRequest());
     }
 
     /**
@@ -328,16 +283,16 @@ final class BotbyeClient
         ];
     }
 
+    /**
+     * Reports this server integration to the backend. Best-effort: any failure is logged via the
+     * injected PSR-3 logger and swallowed, so it never blocks or breaks the customer's request.
+     * The server key is sent only in the request body and is never logged.
+     */
     private function initRequest(): void
     {
         try {
             $url = rtrim($this->config->botbyeEndpoint, '/') . '/init-request/v1';
-            error_log('[BotBye] init-request: url = ' . $url);
-
-            $body = ['serverKey' => $this->config->serverKey];
-            error_log('[BotBye] init-request: body = ' . json_encode($body));
-
-            $jsonBody = json_encode($body, JSON_THROW_ON_ERROR);
+            $jsonBody = json_encode(['serverKey' => $this->config->serverKey], JSON_THROW_ON_ERROR);
 
             $request = $this->requestFactory->createRequest('POST', $url);
             foreach ($this->buildHeaders() as $name => $value) {
@@ -349,20 +304,17 @@ final class BotbyeClient
 
             $response = $this->httpClient->sendRequest($request);
 
-            $statusCode = $response->getStatusCode();
-            error_log('[BotBye] init-request: HTTP status = ' . $statusCode);
-
             $content = (string)$response->getBody();
             $decoded = json_decode($content, true, 512, JSON_THROW_ON_ERROR);
 
-            if (($decoded['error'] ?? null) !== null || ($decoded['status'] ?? null) !== 'ok') {
-                error_log('[BotBye] init-request error = ' . ($decoded['error'] ?? 'null')
-                    . '; status = ' . ($decoded['status'] ?? 'null'));
-            } else {
-                error_log('[BotBye] init-request: success, status = ' . ($decoded['status'] ?? 'null'));
+            if (!is_array($decoded) || ($decoded['error'] ?? null) !== null || ($decoded['status'] ?? null) !== 'ok') {
+                $this->logger->warning(
+                    '[BotBye] init-request failed: HTTP ' . $response->getStatusCode()
+                    . ', status=' . (is_array($decoded) ? ($decoded['status'] ?? 'null') : 'null')
+                );
             }
         } catch (Exception $e) {
-            error_log('[BotBye] init-request exception: ' . $e->getMessage());
+            $this->logger->warning('[BotBye] init-request exception: ' . $e->getMessage());
         }
     }
 }

@@ -6,6 +6,7 @@ namespace Botbye\Phishing;
 
 use Botbye\Common\BotbyeError;
 use Botbye\Common\ErrorClassifier;
+use Botbye\Common\InitGuard;
 use Botbye\Common\ModuleInfo;
 use Closure;
 use Exception;
@@ -28,7 +29,7 @@ use Psr\Log\NullLogger;
  */
 final class BotbyePhishingClient
 {
-    private static bool $inited = false;
+    use InitGuard;
 
     private LoggerInterface $logger;
 
@@ -134,97 +135,19 @@ final class BotbyePhishingClient
     }
 
     /**
-     * Fires the init handshake at most once per process. PHP re-instantiates the client per request,
-     * so a static flag + a per-(endpoint, clientKey) file flag suppress the otherwise per-request POST.
-     * Mirrors the evaluate client's guard.
+     * Fires the init handshake at most once per process per (endpoint, clientKey), via the shared
+     * {@see InitGuard}. The blocking POST runs outside the guard's file lock; mirrors the evaluate client.
      */
     private function ensureInited(): void
     {
-        if (self::$inited) {
-            return;
-        }
+        $guardKey = hash('sha256', rtrim($this->config->endpoint, '/') . '|' . $this->config->clientKey);
+        $flagFile = $this->initGuardFlagFilePath(
+            $this->config->initGuardFlagFile,
+            'botbye-php-sdk-phishing-init-',
+            $guardKey,
+        );
 
-        $flagFile = $this->getInitGuardFlagFilePath();
-        $lockFile = $flagFile . '.lock';
-
-        $lockHandle = @fopen($lockFile, 'c');
-        if ($lockHandle === false) {
-            self::$inited = true;
-            $this->initRequest();
-            return;
-        }
-
-        try {
-            if (!@flock($lockHandle, LOCK_EX)) {
-                self::$inited = true;
-                $this->initRequest();
-                return;
-            }
-
-            clearstatcache(true, $flagFile);
-
-            $token = $this->processToken();
-            $needsInit = true;
-
-            if (is_file($flagFile)) {
-                $content = (string)@file_get_contents($flagFile);
-                if (preg_match('/^token:(.+)$/m', $content, $m)) {
-                    if ($m[1] === $token) {
-                        $needsInit = false;
-                    }
-                }
-            }
-
-            self::$inited = true;
-
-            if ($needsInit) {
-                $this->initRequest();
-                @file_put_contents($flagFile, "token:$token\nat:" . time() . "\n", LOCK_EX);
-            }
-        } finally {
-            @flock($lockHandle, LOCK_UN);
-            @fclose($lockHandle);
-        }
-    }
-
-    /**
-     * Identifies this process incarnation for the init guard. The pid alone is not enough: a process
-     * manager (or a container, where the SAPI is always pid 1) reuses pids across restarts, so a stale
-     * guard file left in a persistent temp dir would suppress the handshake for the new process. Pairing
-     * the pid with the kernel process start time (field 22 of {@code /proc/self/stat}) makes the token
-     * unique per incarnation; on platforms without procfs it degrades to pid-only.
-     */
-    private function processToken(): string
-    {
-        $pid = (string)getmypid();
-
-        $stat = @file_get_contents('/proc/self/stat');
-        if ($stat !== false) {
-            // comm (field 2) is parenthesised and may contain spaces, so parse after the final ')':
-            // the remaining whitespace-separated fields start at field 3 (state), making starttime
-            // (field 22) the element at index 19.
-            $rparen = strrpos($stat, ')');
-            if ($rparen !== false) {
-                $rest = preg_split('/\s+/', trim(substr($stat, $rparen + 1)));
-                if (is_array($rest) && isset($rest[19]) && $rest[19] !== '') {
-                    return $pid . '-' . $rest[19];
-                }
-            }
-        }
-
-        return $pid;
-    }
-
-    private function getInitGuardFlagFilePath(): string
-    {
-        if ($this->config->initGuardFlagFile !== null && $this->config->initGuardFlagFile !== '') {
-            return $this->config->initGuardFlagFile;
-        }
-
-        $key = hash('sha256', rtrim($this->config->endpoint, '/') . '|' . $this->config->clientKey);
-        $dir = rtrim((string)sys_get_temp_dir(), DIRECTORY_SEPARATOR);
-
-        return $dir . DIRECTORY_SEPARATOR . 'botbye-php-sdk-phishing-init-' . $key . '.flag';
+        $this->runInitGuardOnce($guardKey, $flagFile, fn () => $this->initRequest());
     }
 
     /**

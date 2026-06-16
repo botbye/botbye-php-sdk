@@ -36,7 +36,7 @@ final class BotbyeFullEvent implements BotbyeEvent
 
     public function getUrlToken(): ?string
     {
-        return $this->token;
+        return $this->token !== '' ? $this->token : null;
     }
 
     public function jsonSerialize(): array

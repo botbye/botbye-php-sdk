@@ -21,6 +21,7 @@ final class BotbyeExtraData implements JsonSerializable
         public readonly ?string $platformVersion = null,
         public readonly ?string $realIp = null,
         public readonly ?string $realCountry = null,
+        public readonly ?string $realOrigin = null,
     ) {
     }
 
@@ -39,6 +40,7 @@ final class BotbyeExtraData implements JsonSerializable
             'platformVersion' => $this->platformVersion,
             'realIp' => $this->realIp,
             'realCountry' => $this->realCountry,
+            'realOrigin' => $this->realOrigin,
         ], fn($value) => $value !== null);
     }
 
@@ -57,6 +59,7 @@ final class BotbyeExtraData implements JsonSerializable
             platformVersion: $data['platformVersion'] ?? null,
             realIp: $data['realIp'] ?? null,
             realCountry: $data['realCountry'] ?? null,
+            realOrigin: $data['realOrigin'] ?? null,
         );
     }
 }

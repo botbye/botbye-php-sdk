@@ -316,7 +316,7 @@ $res->error;    // ?BotbyeError — non-null on transport failure
 | `riskScore` | `?float` | Overall risk score (0–1) |
 | `scores` | `?array` | Per-dimension scores (`bot`, `ato`, `abuse`, ...) |
 | `signals` | `?array` | Triggered signal names (e.g., `BruteForce`, `ImpossibleTravel`) |
-| `challenge` | `?BotbyeChallenge` | Challenge type and token (when decision is `CHALLENGE`) |
+| `challenge` | `?BotbyeChallenge` | Challenge type (when decision is `CHALLENGE`) |
 | `extraData` | `?BotbyeExtraData` | Enriched device data (IP, country, browser, device, etc.) |
 | `error` | `?BotbyeError` | Error details (on fallback) |
 | `botbyeResult` | `?string` | Encoded result for Level 1→2 propagation |
