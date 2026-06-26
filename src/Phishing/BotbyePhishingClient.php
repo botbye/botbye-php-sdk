@@ -113,9 +113,13 @@ final class BotbyePhishingClient
     ): BotbyePhishingResponse {
         try {
             $request = $this->requestFactory->createRequest('GET', $url)
-                ->withHeader('Origin', $origin ?? 'origin is missing')
                 ->withHeader('Module-Name', ModuleInfo::NAME)
                 ->withHeader('Module-Version', ModuleInfo::VERSION);
+
+            // Only forward Origin when the caller has a real value
+            if (!self::isMissingOrigin($origin)) {
+                $request = $request->withHeader('Origin', $origin);
+            }
 
             $response = $this->httpClient->sendRequest($request);
 
@@ -132,6 +136,15 @@ final class BotbyePhishingClient
             $this->logger->warning('[BotBye] phishing image exception occurred: ' . $e->getMessage());
             return new BotbyePhishingResponse(error: new BotbyeError(ErrorClassifier::classify($e->getMessage())));
         }
+    }
+
+    /**
+     * The Origin is unusable when absent, blank, or the literal "null" that browsers emit for opaque
+     * origins (and that a stringified null produces)
+     */
+    private static function isMissingOrigin(?string $origin): bool
+    {
+        return $origin === null || trim($origin) === '' || strcasecmp(trim($origin), 'null') === 0;
     }
 
     /**

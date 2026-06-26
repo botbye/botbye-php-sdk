@@ -12,5 +12,5 @@ namespace Botbye\Common;
 final class ModuleInfo
 {
     public const NAME = 'PHP';
-    public const VERSION = '3.0.0';
+    public const VERSION = '3.0.1';
 }
