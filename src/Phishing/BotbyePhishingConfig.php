@@ -14,8 +14,10 @@ final class BotbyePhishingConfig
     public readonly string $clientKey;
 
     public function __construct(
-        string $endpoint,
-        string $clientKey,
+        // Defaults to DEFAULT_ENDPOINT, which is what an empty value already resolved to — so
+        // `new BotbyePhishingConfig(clientKey: '…')` works, as the docs show it.
+        string $endpoint = '',
+        string $clientKey = '',
         /** Overrides where the once-per-process init-handshake guard flag is stored (default: temp dir). */
         public readonly ?string $initGuardFlagFile = null,
     ) {
