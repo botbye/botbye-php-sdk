@@ -12,6 +12,6 @@ final class ModuleInfoTest extends TestCase
     public function testModuleConstants(): void
     {
         $this->assertSame('PHP', ModuleInfo::NAME);
-        $this->assertSame('3.0.0', ModuleInfo::VERSION);
+        $this->assertSame('4.0.0', ModuleInfo::VERSION);
     }
 }

@@ -262,18 +262,20 @@ $response = $client->evaluate(new BotbyeFullEvent(
 ### 5. Phishing Image Tracking
 
 The phishing tracking pixel is embedded on a protected site; when a phishing clone copies the
-markup, the pixel is requested with the clone's `Origin`, which lets BotBye record a phishing
-candidate.
+markup, the pixel is requested with the clone's `Origin` — or, where the pixel is embedded as
+`<object data="…svg">` and no `Origin` is sent at all, with its `Referer`. Either header names the
+page, which is what lets BotBye record a phishing candidate.
 
 Phishing lives in its own dedicated `BotbyePhishingClient` — **separate from the evaluate
 `BotbyeClient`**. The project is identified by a public, browser-safe `clientKey` in the URL path,
 so the client needs **no server key**; you can construct it standalone (it only needs a PSR-18 client
 and a PSR-17 request factory). On construction it fires a best-effort server-integration init
 handshake (`POST /api/v1/phishing/init-request/v1/{clientKey}`, guarded to run once per process)
-reporting this module, and `fetchImage` proxies the pixel via the server `/server` route so the
-backend can attribute it to this module even when the browser never reaches BotBye directly.
+reporting this module, and `fetchCatcher` proxies the asset via the server `/server` route so
+the backend can attribute it to this module even when the browser never reaches BotBye directly.
 
 ```php
+use Botbye\Phishing\BotbyePhishingCatcher;
 use Botbye\Phishing\BotbyePhishingClient;
 use Botbye\Phishing\BotbyePhishingConfig;
 
@@ -286,23 +288,45 @@ $phishing = new BotbyePhishingClient(
     $requestFactory, // PSR-17 RequestFactoryInterface
 );
 
-// Proxy the browser's pixel request: forward its original query verbatim (it carries
-// format / image_id and the JS tag's module_name / module_version).
-$res = $phishing->fetchImage($_SERVER['HTTP_ORIGIN'] ?? null, $_GET);
+// One method; the catcher you pass picks the asset. Pass Referer next to Origin — an SVG pixel embedded
+// as <object data="…svg"> sends no Origin, so Referer is the only header naming the page.
+$res = $phishing->fetchCatcher(
+    BotbyePhishingCatcher::png(),
+    $_SERVER['HTTP_ORIGIN'] ?? null,
+    $_SERVER['HTTP_REFERER'] ?? null,
+);
+
+// The SVG names the URL it embeds as the nested pixel (point it at your own PNG endpoint so that fetch
+// proxies through your origin too — BotBye honours it only as an absolute http(s) URL). It is a required
+// argument of svg(), not an optional parameter, so an SVG without one cannot be constructed.
+$svg = $phishing->fetchCatcher(
+    // svg($url, false) opts into the script-carrying variant; svg($url) is script-less, no JS on the page.
+    BotbyePhishingCatcher::svg('https://your-site.example/example.png'),
+    $_SERVER['HTTP_ORIGIN'] ?? null,
+    $_SERVER['HTTP_REFERER'] ?? null,
+);
 
 $res->status;   // 200
-$res->headers;  // ['Content-Type' => 'image/png', ...]
+$res->headers;  // ['Content-Type' => 'image/png', ...] — image/svg+xml for the SVG response
 $res->body;     // string — raw image bytes to relay back to the browser
 $res->error;    // ?BotbyeError — non-null on transport failure
 ```
 
-`fetchImage` returns `BotbyePhishingResponse`:
+`format`, `image_id` and `executable` are set by the call and never read off the request: the endpoint
+you expose is public, so a query on it must not be able to redirect the nested pixel fetch or pick the
+SVG variant behind your back. Only `module_name` and `module_version` pass through, and only via the
+extractor below. `executable` is always sent, never omitted, so the variant never rides on the backend's
+default for a missing param, and `$skipExecution` defaults to `true` — the script-less SVG. A blank
+`$innerPngUrl` — the one thing the signature cannot rule out — is rejected by
+`BotbyePhishingCatcher::svg()` itself.
+
+`fetchCatcher` returns `BotbyePhishingResponse`:
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | `int` | Upstream HTTP status (`0` on transport failure) |
+| `status` | `int` | Upstream HTTP status. A transport failure has none, so it reports the gateway status it means: `504` for a timeout, `502` for anything else |
 | `headers` | `array` | Response headers (e.g. `Content-Type`) |
-| `body` | `string` | Raw image bytes (PNG or SVG, per the forwarded `format` query param) |
+| `body` | `string` | Raw image bytes (PNG or SVG, per the catcher you passed) |
 | `error` | `?BotbyeError` | Normalized transport error: `timeout`, `connection error`, or `invalid json response` |
 
 ## Response
@@ -536,22 +560,34 @@ class BotbyeSubscriber implements EventSubscriberInterface
 
 ### Phishing from a raw request
 
-The phishing client mirrors the same pattern — bind an `Origin` extractor once, then pass the raw
-request to `fetchImageFromRequest`:
+The phishing client mirrors the same pattern — bind an extractor once, then pass the raw request to
+`fetchCatcher` where the `Origin` header value would go. One entry point either way: a string or `null`
+there is the header, anything else is the request the extractor reads.
 
 ```php
+use Botbye\Phishing\BotbyePhishingCatcher;
 use Botbye\Phishing\BotbyePhishingClient;
 use Botbye\Phishing\BotbyePhishingConfig;
+use Botbye\Phishing\BotbyePhishingRequestInfo;
 
 $phishing = BotbyePhishingClient::withExtractor(
     config: new BotbyePhishingConfig(clientKey: '<public-client-key>'),
     httpClient: $httpClient,
     requestFactory: $requestFactory,
-    originExtractor: fn ($request) => $request->headers->get('Origin'),
+    requestInfoExtractor: fn ($request) => new BotbyePhishingRequestInfo(
+        origin: $request->headers->get('Origin'),
+        referer: $request->headers->get('Referer'),
+        query: $request->getQueryParams(),
+    ),
 );
 
-// Origin via the extractor; forward the browser's pixel query for attribution
-$res = $phishing->fetchImageFromRequest($request, $request->getQueryParams());
+// Origin, Referer and the attribution params all via the extractor — the single place that reads the
+// request
+$res = $phishing->fetchCatcher(BotbyePhishingCatcher::png(), $request);
+$svg = $phishing->fetchCatcher(
+    BotbyePhishingCatcher::svg('https://your-site.example/example.png'),
+    $request,
+);
 ```
 
 ## Helpers
